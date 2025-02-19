@@ -177,7 +177,7 @@
 #include <regex>
 
 #define PLUGIN_NAME	"Advanced Bans"
-#define PLUGIN_VERSION	"0.8"
+#define PLUGIN_VERSION	"0.9"
 #define PLUGIN_AUTHOR	"Exolent"
 
 #pragma semicolon 1
@@ -346,9 +346,9 @@ new g_szServerName[64];
 public plugin_init()
 {
 	register_plugin(PLUGIN_NAME, PLUGIN_VERSION, PLUGIN_AUTHOR);
-	register_cvar("advanced_bans", PLUGIN_VERSION, FCVAR_SPONLY);
+	register_cvar("gs_advanced_bans", PLUGIN_VERSION, FCVAR_SPONLY);
 	
-	register_dictionary("advanced_bans.txt");
+	register_dictionary("advanced_bans_sql.txt");
 	
 	register_concmd("amx_ban", "CmdBan", ADMIN_BAN, "<nick, #userid, authid> <time in minutes> <reason>");
 	register_concmd("amx_banip", "CmdBanIp", ADMIN_BAN, "<nick, #userid, authid> <time in minutes> <reason>");
@@ -404,7 +404,7 @@ public PrepareTable()
 	
 	new query[1024];
 	formatex(query, sizeof(query) - 1,\
-		"CREATE TABLE IF NOT EXISTS %s (id int(10) auto_increment, %s varchar(32), %s varchar(35), %s int(10), %s varchar(32), %s varchar(128), %s varchar(64), %s varchar(35), %s varchar(64), %s int(11), primary key (id))",\
+		"CREATE TABLE IF NOT EXISTS %s (id int(11) auto_increment, %s varchar(32), %s varchar(35), %s int(10), %s varchar(32), %s varchar(128), %s varchar(64), %s varchar(35), %s varchar(64), %s int(11), primary key (id))",\
 		TABLE_NAME, KEY_NAME, KEY_STEAMID, KEY_BANLENGTH, KEY_UNBANTIME, KEY_REASON, KEY_ADMIN_NAME, KEY_ADMIN_STEAMID, KEY_SERVER_NAME, KEY_BAN_TIME
 		);
 	
@@ -1087,7 +1087,7 @@ AddBan(const target_name[], const target_steamid[], const reason[], const length
 	#endif
 	
 	#if defined USING_SQL
-	static target_name2[32], reason2[128], admin_name2[32];
+	static target_name2[32], reason2[128], admin_name2[64];
 	MakeStringSQLSafe(target_name, target_name2, sizeof(target_name2) - 1);
 	MakeStringSQLSafe(reason, reason2, sizeof(reason2) - 1);
 	MakeStringSQLSafe(admin_name, admin_name2, sizeof(admin_name2) - 1);

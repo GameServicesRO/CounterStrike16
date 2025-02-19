@@ -18,10 +18,7 @@
 #include <sqlx>
 #endif
 
-//new Vector:AdminList;
-
 new AdminCount;
-
 new PLUGINNAME[] = "AMX Mod X"
 
 #define ADMIN_LOOKUP	(1<<0)
@@ -32,7 +29,6 @@ new PLUGINNAME[] = "AMX Mod X"
 
 new bool:g_CaseSensitiveName[MAX_PLAYERS + 1];
 
-// pcvars
 new amx_mode;
 new amx_password_field;
 new amx_default_access;
@@ -82,10 +78,6 @@ public plugin_init()
 	get_configsdir(configsDir, charsmax(configsDir))
 
 	server_cmd("exec %s/sql.cfg", configsDir)
-
-	// Create a vector of 5 cells to store the info.
-	//AdminList=vector_create(5);
-
 	
 #if defined USING_SQL
 	server_cmd("amx_sqladmins")

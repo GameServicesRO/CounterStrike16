@@ -1087,7 +1087,7 @@ AddBan(const target_name[], const target_steamid[], const reason[], const length
 	#endif
 	
 	#if defined USING_SQL
-	static target_name2[32], reason2[128], admin_name2[32];
+	static target_name2[32], reason2[128], admin_name2[64];
 	MakeStringSQLSafe(target_name, target_name2, sizeof(target_name2) - 1);
 	MakeStringSQLSafe(reason, reason2, sizeof(reason2) - 1);
 	MakeStringSQLSafe(admin_name, admin_name2, sizeof(admin_name2) - 1);

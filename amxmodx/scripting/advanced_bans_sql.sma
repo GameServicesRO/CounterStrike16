@@ -346,9 +346,9 @@ new g_szServerName[64];
 public plugin_init()
 {
 	register_plugin(PLUGIN_NAME, PLUGIN_VERSION, PLUGIN_AUTHOR);
-	register_cvar("advanced_bans", PLUGIN_VERSION, FCVAR_SPONLY);
+	register_cvar("gs_advanced_bans", PLUGIN_VERSION, FCVAR_SPONLY);
 	
-	register_dictionary("advanced_bans.txt");
+	register_dictionary("advanced_bans_sql.txt");
 	
 	register_concmd("amx_ban", "CmdBan", ADMIN_BAN, "<nick, #userid, authid> <time in minutes> <reason>");
 	register_concmd("amx_banip", "CmdBanIp", ADMIN_BAN, "<nick, #userid, authid> <time in minutes> <reason>");

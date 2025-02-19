@@ -12,7 +12,6 @@
 	- http://forums.alliedmods.net/showthread.php?t=80858
 	
 	
-	
 	Description:
 	
 	- This plugin revamps the current amx_ban, amx_banip, amx_banid, amx_unban admin commands.

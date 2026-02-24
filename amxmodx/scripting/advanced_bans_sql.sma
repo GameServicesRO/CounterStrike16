@@ -231,6 +231,7 @@
 #define KEY_ADMIN_STEAMID	"admin_steamid"
 #define KEY_SERVER_NAME "server_name"
 #define KEY_BAN_TIME "bantime"
+#define KEY_HIDE	"hide"
 
 #define RELOAD_BANS_INTERVAL	60.0
 #endif
@@ -404,8 +405,8 @@ public PrepareTable()
 	
 	new query[1024];
 	formatex(query, sizeof(query) - 1,\
-		"CREATE TABLE IF NOT EXISTS %s (id int(11) auto_increment, %s varchar(32), %s varchar(64), %s int(10), %s varchar(32), %s varchar(128), %s varchar(64), %s varchar(64), %s varchar(64), %s int(11), primary key (id))",\
-		TABLE_NAME, KEY_NAME, KEY_STEAMID, KEY_BANLENGTH, KEY_UNBANTIME, KEY_REASON, KEY_ADMIN_NAME, KEY_ADMIN_STEAMID, KEY_SERVER_NAME, KEY_BAN_TIME
+		"CREATE TABLE IF NOT EXISTS %s (id int(11) auto_increment, %s varchar(32), %s varchar(64), %s int(10), %s varchar(32), %s varchar(128), %s varchar(64), %s varchar(64), %s varchar(64), %s int(11), %s int(1) not null default 0, primary key (id))",\
+		TABLE_NAME, KEY_NAME, KEY_STEAMID, KEY_BANLENGTH, KEY_UNBANTIME, KEY_REASON, KEY_ADMIN_NAME, KEY_ADMIN_STEAMID, KEY_SERVER_NAME, KEY_BAN_TIME, KEY_HIDE
 		);
 	
 	#if defined THREAD_QUERIES

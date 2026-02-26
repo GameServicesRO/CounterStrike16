@@ -33,6 +33,16 @@ new amx_mode;
 new amx_password_field;
 new amx_default_access;
 
+// Platform
+
+enum _:AdminData
+{
+	DBID,
+	NAME[MAX_NAME_LENGTH],
+}
+
+new Array:g_aAdminSteamIDUpdateNeeded;
+
 public plugin_init()
 {
 #if defined USING_SQL
@@ -74,6 +84,8 @@ public plugin_init()
 
 	remove_user_flags(0, read_flags("z"))		// Remove 'user' flag from server rights
 
+	g_aAdminSteamIDUpdateNeeded = ArrayCreate(AdminData)
+
 	new configsDir[64]
 	get_configsdir(configsDir, charsmax(configsDir))
 
@@ -86,10 +98,17 @@ public plugin_init()
 	loadSettings(configsDir)					// Load admins accounts
 #endif
 }
+
+public plugin_end()
+{
+	ArrayDestroy(g_aAdminSteamIDUpdateNeeded);
+}
+
 public client_connect(id)
 {
 	g_CaseSensitiveName[id] = false;
 }
+
 public addadminfn(id, level, cid)
 {
 	if (!cmd_access(id, level, cid, 3))
@@ -442,7 +461,7 @@ public adminSql()
 	} else {
 		SQL_QueryAndIgnore(sql, "CREATE TABLE IF NOT EXISTS `%s` (`id` INT(11) NOT NULL AUTO_INCREMENT, `steamid` VARCHAR( 64 ) DEFAULT NULL UNIQUE, `unique_key` VARCHAR( 64 ) DEFAULT NULL, `auth` VARCHAR( 32 ) NOT NULL UNIQUE, `password` VARCHAR( 32 ) NOT NULL, `group_id` INT(11) NOT NULL, `access` VARCHAR( 32 ) NOT NULL, `flags` VARCHAR( 32 ) NOT NULL, `mentions` VARCHAR(255) DEFAULT NULL, `expire` INT(11) NOT NULL DEFAULT 0, `hide` INT(1) NOT NULL DEFAULT 0, PRIMARY KEY(id)) COMMENT = 'AMX Mod X Admins';", table)
 		SQL_QueryAndIgnore(sql, "CREATE TABLE IF NOT EXISTS `%s_groups` (`id` INT(11) NOT NULL AUTO_INCREMENT, `name` VARCHAR( 64 ) NOT NULL UNIQUE, `flags` VARCHAR( 64 ) NOT NULL, `additional_properties` JSON NULL, `hide` INT(1) NOT NULL DEFAULT 0, PRIMARY KEY(id)) COMMENT = 'GameServices Admins Groups';", table)
-		query = SQL_PrepareQuery(sql,"SELECT `auth`,`password`,`access`,`flags` FROM `%s`", table)
+		query = SQL_PrepareQuery(sql,"SELECT `id`,`auth`,`password`,`access`,`flags`,`steamid` FROM `%s`", table)
 	}
 
 	if (!SQL_Execute(query))
@@ -456,15 +475,21 @@ public adminSql()
 		AdminCount = 0
 		
 		/** do this incase people change the query order and forget to modify below */
-		new qcolAuth = SQL_FieldNameToNum(query, "auth")
-		new qcolPass = SQL_FieldNameToNum(query, "password")
-		new qcolAccess = SQL_FieldNameToNum(query, "access")
-		new qcolFlags = SQL_FieldNameToNum(query, "flags")
-		
+		new const qcolAuth = SQL_FieldNameToNum(query, "auth")
+		new const qcolPass = SQL_FieldNameToNum(query, "password")
+		new const qcolAccess = SQL_FieldNameToNum(query, "access")
+		new const qcolFlags = SQL_FieldNameToNum(query, "flags")
+		new const qcolId = SQL_FieldNameToNum(query, "id")
+		new const qcolSteamID = SQL_FieldNameToNum(query, "steamid")
+
 		new AuthData[44];
 		new Password[44];
 		new Access[32];
 		new Flags[32];
+		new SteamID[MAX_AUTHID_LENGTH]
+		new id = -1;
+
+		new eData[AdminData];
 		
 		while (SQL_MoreResults(query))
 		{
@@ -472,10 +497,29 @@ public adminSql()
 			SQL_ReadResult(query, qcolPass, Password, charsmax(Password));
 			SQL_ReadResult(query, qcolAccess, Access, charsmax(Access));
 			SQL_ReadResult(query, qcolFlags, Flags, charsmax(Flags));
-	
+
 			admins_push(AuthData,Password,read_flags(Access),read_flags(Flags));
 	
 			++AdminCount;
+
+			if(!equal(Flags, "a"))
+			{
+				log_amx("Platform login by steamid it's disabled for admin %s because he does not have auth flags set to 'a' (name and password).", qcolAuth)
+				SQL_NextRow(query);
+				continue;
+			}
+
+			id = SQL_ReadResult(query, qcolId);
+			SQL_ReadResult(query, qcolSteamID, SteamID, charsmax(SteamID));
+
+			if(!strlen(SteamID))
+			{
+				eData[DBID] = id;
+				copy(eData[NAME], charsmax(eData[NAME]), AuthData)
+
+				ArrayPushArray(g_aAdminSteamIDUpdateNeeded, eData)
+			}
+
 			SQL_NextRow(query)
 		}
 	
@@ -486,6 +530,13 @@ public adminSql()
 		else
 		{
 			server_print("[AMXX] %L", LANG_SERVER, "SQL_LOADED_ADMINS", AdminCount)
+		}
+
+		new const toUpdateAdminsCount = ArraySize(g_aAdminSteamIDUpdateNeeded)
+
+		if(toUpdateAdminsCount > 0)
+		{
+			server_print("[AMXX] Loaded %i admin%s which need to join the server to update SteamID in database", toUpdateAdminsCount > 1 ?  "s": "", toUpdateAdminsCount)
 		}
 		
 		SQL_FreeHandle(query)
@@ -782,7 +833,65 @@ public client_infochanged(id)
 }
 
 public client_authorized(id)
-	return get_pcvar_num(amx_mode) ? accessUser(id) : PLUGIN_CONTINUE
+{
+	new const iAuthorizeResult = get_pcvar_num(amx_mode) ? accessUser(id) : PLUGIN_CONTINUE
+
+	if(iAuthorizeResult == PLUGIN_CONTINUE)
+	{
+		new errno;
+		static error[1024]
+		new Handle:info = SQL_MakeStdTuple()
+		new Handle:sql = SQL_Connect(info, errno, error, charsmax(error))
+		
+		if (sql == Empty_Handle)
+		{
+			log_amx("Failed to connect to database. Error: %s", error);
+			return iAuthorizeResult;
+		}
+
+		new szName[MAX_NAME_LENGTH + 1], szAuthID[MAX_AUTHID_LENGTH]
+		get_user_name(id, szName, charsmax(szName))
+		get_user_authid(id, szAuthID, charsmax(szAuthID))
+
+		new table[32]
+		get_cvar_string("amx_sql_table", table, charsmax(table))
+
+		for(new i = 0, eData[AdminData]; i < ArraySize(g_aAdminSteamIDUpdateNeeded); i++)
+		{
+			ArrayGetArray(g_aAdminSteamIDUpdateNeeded, i, eData)
+		
+			if(equal(eData[NAME], szName))
+			{
+				SQL_ThreadQuery(
+					info, 
+					"SaveAdminSteamIDCallback", 
+					fmt("UPDATE %s SET `steamid` = '%s' WHERE id = %i", table, szAuthID, eData[DBID]),
+					szName,
+					sizeof(szName)
+				)
+
+				break;
+			}
+		}
+
+	}
+	
+	return iAuthorizeResult;
+}
+
+public SaveAdminSteamIDCallback(failstate, Handle:query, error[], errnum, data[], size, Float:queuetime)
+{
+	if(failstate || errnum)
+	{
+		log_amx("[LINE: %i] An SQL Error has been encoutered while updating admin %s steamid. Error code %i^nError: %s", __LINE__, data, errnum, error);
+		SQL_FreeHandle(query);
+		return;
+	}
+
+	log_amx("Admin %s SteamID updated succesfully", data);
+
+	SQL_FreeHandle(query);
+}
 
 public client_putinserver(id)
 {

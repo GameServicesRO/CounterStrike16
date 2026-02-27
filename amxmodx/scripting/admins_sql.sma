@@ -16,6 +16,7 @@
 #include <amxmisc>
 #if defined USING_SQL
 #include <sqlx>
+#include <unixtime>
 #endif
 
 new AdminCount;
@@ -26,6 +27,8 @@ new PLUGINNAME[] = "AMX Mod X"
 #define ADMIN_STEAM		(1<<2)
 #define ADMIN_IPADDR	(1<<3)
 #define ADMIN_NAME		(1<<4)
+
+#define ANNOUNCE_EXPIRED_ADMIN_TASK 432413
 
 new bool:g_CaseSensitiveName[MAX_PLAYERS + 1];
 
@@ -41,7 +44,14 @@ enum _:AdminData
 	NAME[MAX_NAME_LENGTH],
 }
 
+enum _:ExpiredAdminData
+{
+	NAME[MAX_NAME_LENGTH],
+	EXPIRE_TIME
+}
+
 new Array:g_aAdminSteamIDUpdateNeeded;
+new Array:g_aExpiredAdmins;
 
 public plugin_init()
 {
@@ -85,6 +95,7 @@ public plugin_init()
 	remove_user_flags(0, read_flags("z"))		// Remove 'user' flag from server rights
 
 	g_aAdminSteamIDUpdateNeeded = ArrayCreate(AdminData)
+	g_aExpiredAdmins = ArrayCreate(ExpiredAdminData)
 
 	new configsDir[64]
 	get_configsdir(configsDir, charsmax(configsDir))
@@ -102,6 +113,7 @@ public plugin_init()
 public plugin_end()
 {
 	ArrayDestroy(g_aAdminSteamIDUpdateNeeded);
+	ArrayDestroy(g_aExpiredAdmins)
 }
 
 public client_connect(id)
@@ -461,7 +473,7 @@ public adminSql()
 	} else {
 		SQL_QueryAndIgnore(sql, "CREATE TABLE IF NOT EXISTS `%s` (`id` INT(11) NOT NULL AUTO_INCREMENT, `steamid` VARCHAR( 64 ) DEFAULT NULL UNIQUE, `unique_key` VARCHAR( 64 ) DEFAULT NULL, `auth` VARCHAR( 32 ) NOT NULL UNIQUE, `password` VARCHAR( 32 ) NOT NULL, `group_id` INT(11) NOT NULL, `access` VARCHAR( 32 ) NOT NULL, `flags` VARCHAR( 32 ) NOT NULL, `mentions` VARCHAR(255) DEFAULT NULL, `expire` INT(11) NOT NULL DEFAULT 0, `hide` INT(1) NOT NULL DEFAULT 0, PRIMARY KEY(id)) COMMENT = 'AMX Mod X Admins';", table)
 		SQL_QueryAndIgnore(sql, "CREATE TABLE IF NOT EXISTS `%s_groups` (`id` INT(11) NOT NULL AUTO_INCREMENT, `name` VARCHAR( 64 ) NOT NULL UNIQUE, `flags` VARCHAR( 64 ) NOT NULL, `additional_properties` JSON NULL, `hide` INT(1) NOT NULL DEFAULT 0, PRIMARY KEY(id)) COMMENT = 'GameServices Admins Groups';", table)
-		query = SQL_PrepareQuery(sql,"SELECT `id`,`auth`,`password`,`access`,`flags`,`steamid` FROM `%s`", table)
+		query = SQL_PrepareQuery(sql,"SELECT `id`,`auth`,`password`,`access`,`flags`,`steamid`,`expire` FROM `%s`", table)
 	}
 
 	if (!SQL_Execute(query))
@@ -481,6 +493,7 @@ public adminSql()
 		new const qcolFlags = SQL_FieldNameToNum(query, "flags")
 		new const qcolId = SQL_FieldNameToNum(query, "id")
 		new const qcolSteamID = SQL_FieldNameToNum(query, "steamid")
+		new const qcolExpire = SQL_FieldNameToNum(query, "expire")
 
 		new AuthData[44];
 		new Password[44];
@@ -488,6 +501,7 @@ public adminSql()
 		new Flags[32];
 		new SteamID[MAX_AUTHID_LENGTH]
 		new id = -1;
+		new expire = 0;
 
 		new eData[AdminData];
 		
@@ -497,6 +511,21 @@ public adminSql()
 			SQL_ReadResult(query, qcolPass, Password, charsmax(Password));
 			SQL_ReadResult(query, qcolAccess, Access, charsmax(Access));
 			SQL_ReadResult(query, qcolFlags, Flags, charsmax(Flags));
+
+			expire = SQL_ReadResult(query, qcolExpire);
+
+			if(equal(Flags, "a") && expire != 0 && expire < get_systime())
+			{
+				new eExpiredData[ExpiredAdminData]
+				
+				copy(eExpiredData[NAME], charsmax(eExpiredData[NAME]), AuthData)
+				eExpiredData[EXPIRE_TIME] = expire
+				
+				ArrayPushArray(g_aExpiredAdmins, eExpiredData)
+
+				SQL_NextRow(query)
+				continue;
+			}
 
 			admins_push(AuthData,Password,read_flags(Access),read_flags(Flags));
 	
@@ -894,9 +923,53 @@ public SaveAdminSteamIDCallback(failstate, Handle:query, error[], errnum, data[]
 }
 
 public client_putinserver(id)
-{
-	if (!is_dedicated_server() && id == 1)
-		return get_pcvar_num(amx_mode) ? accessUser(id) : PLUGIN_CONTINUE
+{	
+	new const iSize = ArraySize(g_aExpiredAdmins); 
+	new szName[MAX_NAME_LENGTH + 1]
 	
+	get_user_name(id, szName, charsmax(szName))
+
+	new iArrayID = -1
+	for(new i = 0, eExpiredData[ExpiredAdminData]; i < iSize; i++)
+	{
+		ArrayGetArray(g_aExpiredAdmins, i, eExpiredData)
+	
+		if(equal(szName, eExpiredData[NAME]))
+		{
+			iArrayID = i
+			break;
+		}
+	}
+
+	if(iArrayID != -1)
+	{
+		new data[1]; data[0] = iArrayID;
+
+		set_task(6.0, "AnnouncePlayerOfExpiredAdmin", ANNOUNCE_EXPIRED_ADMIN_TASK + id, data, sizeof(data))
+	}
+
+	if (!is_dedicated_server() && id == 1 && get_pcvar_num(amx_mode))
+		return accessUser(id)
+
 	return PLUGIN_CONTINUE
+}
+
+public AnnouncePlayerOfExpiredAdmin(const data[], const TASK_ID)
+{
+	new const id = TASK_ID - ANNOUNCE_EXPIRED_ADMIN_TASK;
+
+	if(!is_user_connected(id))
+		return
+
+	new const expiredTime = data[0]
+
+	new iYear, iMonth, iDay, iHour, iMinute, iSecond;
+
+	UnixToTime(expiredTime, iYear, iMonth, iDay, iHour, iMinute, iSecond)
+
+	client_print_color(id, print_team_default, "Your admin expired on^4 %s%i.%s%i.%i",
+		iDay < 10 ? "0" : "", iDay,
+		iMonth < 10 ? "0" : "", iMonth,
+		iYear
+	)
 }

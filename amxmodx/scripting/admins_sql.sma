@@ -533,7 +533,7 @@ public adminSql()
 
 			if(!equal(Flags, "a"))
 			{
-				log_amx("Platform login by steamid it's disabled for admin %s because he does not have auth flags set to 'a' (name and password).", qcolAuth)
+				log_amx("Platform login by steamid it's disabled for admin %s because he does not have auth flags set to 'a' (name and password).", AuthData)
 				SQL_NextRow(query);
 				continue;
 			}
@@ -565,7 +565,7 @@ public adminSql()
 
 		if(toUpdateAdminsCount > 0)
 		{
-			server_print("[AMXX] Loaded %i admin%s which need to join the server to update SteamID in database", toUpdateAdminsCount > 1 ?  "s": "", toUpdateAdminsCount)
+			server_print("[AMXX] Loaded %i admin%s which need to join the server to update SteamID in database", toUpdateAdminsCount, toUpdateAdminsCount > 1 ?  "s": "")
 		}
 		
 		SQL_FreeHandle(query)

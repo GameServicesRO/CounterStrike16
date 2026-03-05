@@ -41,12 +41,12 @@ new amx_default_access;
 enum _:AdminData
 {
 	DBID,
-	NAME[MAX_NAME_LENGTH],
+	NAME[MAX_NAME_LENGTH + 1],
 }
 
 enum _:ExpiredAdminData
 {
-	NAME[MAX_NAME_LENGTH],
+	NAME[MAX_NAME_LENGTH + 1],
 	EXPIRE_TIME
 }
 
@@ -502,8 +502,6 @@ public adminSql()
 		new SteamID[MAX_AUTHID_LENGTH]
 		new id = -1;
 		new expire = 0;
-
-		new eData[AdminData];
 		
 		while (SQL_MoreResults(query))
 		{
@@ -533,7 +531,7 @@ public adminSql()
 
 			if(!equal(Flags, "a"))
 			{
-				log_amx("Platform login by steamid it's disabled for admin %s because he does not have auth flags set to 'a' (name and password).", AuthData)
+				log_amx("Platform login through Steam linking it's disabled for admin %s because he does not have auth flags set to 'a' (name and password).", AuthData)
 				SQL_NextRow(query);
 				continue;
 			}
@@ -543,6 +541,7 @@ public adminSql()
 
 			if(!strlen(SteamID))
 			{
+				new eData[AdminData];
 				eData[DBID] = id;
 				copy(eData[NAME], charsmax(eData[NAME]), AuthData)
 

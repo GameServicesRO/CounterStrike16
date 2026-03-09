@@ -471,7 +471,7 @@ public adminSql()
 
 		set_fail_state("SQLite it's not supported");
 	} else {
-		SQL_QueryAndIgnore(sql, "CREATE TABLE IF NOT EXISTS `%s` (`id` INT(11) NOT NULL AUTO_INCREMENT, `steamid` VARCHAR( 64 ) DEFAULT NULL UNIQUE, `unique_key` VARCHAR( 64 ) DEFAULT NULL, `auth` VARCHAR( 32 ) NOT NULL UNIQUE, `password` VARCHAR( 32 ) NOT NULL, `group_id` INT(11) NOT NULL, `access` VARCHAR( 32 ) NOT NULL, `flags` VARCHAR( 32 ) NOT NULL, `mentions` VARCHAR(255) DEFAULT NULL, `expire` INT(11) NOT NULL DEFAULT 0, `hide` INT(1) NOT NULL DEFAULT 0, PRIMARY KEY(id)) COMMENT = 'AMX Mod X Admins';", table)
+		SQL_QueryAndIgnore(sql, "CREATE TABLE IF NOT EXISTS `%s` (`id` INT(11) NOT NULL AUTO_INCREMENT, `steamid` VARCHAR( 64 ) DEFAULT NULL UNIQUE, `auth` VARCHAR( 32 ) NOT NULL UNIQUE, `password` VARCHAR( 32 ) NOT NULL, `group_id` INT(11) NOT NULL, `access` VARCHAR( 32 ) NOT NULL, `flags` VARCHAR( 32 ) NOT NULL, `mentions` VARCHAR(255) DEFAULT NULL, `expire` INT(11) NOT NULL DEFAULT 0, `hide` INT(1) NOT NULL DEFAULT 0, PRIMARY KEY(id)) COMMENT = 'AMX Mod X Admins';", table)
 		SQL_QueryAndIgnore(sql, "CREATE TABLE IF NOT EXISTS `%s_groups` (`id` INT(11) NOT NULL AUTO_INCREMENT, `name` VARCHAR( 64 ) NOT NULL UNIQUE, `flags` VARCHAR( 64 ) NOT NULL, `additional_properties` JSON NULL, `hide` INT(1) NOT NULL DEFAULT 0, PRIMARY KEY(id)) COMMENT = 'GameServices Admins Groups';", table)
 		query = SQL_PrepareQuery(sql,"SELECT `id`,`auth`,`password`,`access`,`flags`,`steamid`,`expire` FROM `%s`", table)
 	}

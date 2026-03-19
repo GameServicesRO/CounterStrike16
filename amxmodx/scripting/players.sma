@@ -11,7 +11,7 @@ new g_iJoinedTime[MAX_PLAYERS + 1];
 
 public plugin_init()
 {
-    register_plugin("[GS] Players", "0.1", "lexzor");
+    register_plugin("[GS] Players", "0.3", "lexzor");
 
     new errorCode;
     new errorStr[700];
@@ -75,16 +75,18 @@ public players_generate_unique_keys_cmd()
         log_amx("Failed to execute table creation query. %s", errorStr);
     }
 
-    new Handle:updateQuery;
-    new unique_key[33];
-    new currentSteamID[MAX_AUTHID_LENGTH];
 
     if(SQL_NumResults(query) == 0)
     {
         log_amx("All players have unique keys");
+        SQL_FreeHandle(query);
         return;
     }
 
+    new Handle:updateQuery;
+    new unique_key[33];
+    new currentSteamID[MAX_AUTHID_LENGTH];
+    
     while(SQL_MoreResults(query))
     {
         SQL_ReadResult(query, SQL_FieldNameToNum(query, "steamid"), currentSteamID, charsmax(currentSteamID));
@@ -104,6 +106,9 @@ public players_generate_unique_keys_cmd()
 
         SQL_NextRow(query);
     }
+
+    SQL_FreeHandle(query);
+    SQL_FreeHandle(updateQuery);
 
     return;
 }

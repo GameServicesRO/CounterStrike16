@@ -20,7 +20,10 @@ public plugin_init()
     if(conn == Empty_Handle)
     {
         log_amx("Database connection error %i. %s", errorCode, errorStr);
-        SQL_FreeHandle(conn);
+
+        if(g_hTuple != Empty_Handle)
+            SQL_FreeHandle(g_hTuple);
+
         set_fail_state("Failed to connect to database.");
     }
 

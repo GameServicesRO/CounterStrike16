@@ -7,6 +7,8 @@
 
 new Handle:g_hTuple;
 
+new g_iJoinedTime[MAX_PLAYERS + 1];
+
 public plugin_init()
 {
     register_plugin("[GS] Players", "0.1", "lexzor");
@@ -34,6 +36,7 @@ public plugin_init()
             unique_key VARCHAR(33) NOT NULL, \
             ip VARCHAR(45) NOT NULL, \
             country CHAR(2) NOT NULL, \
+            time_played INT(11) NOT NULL DEFAULT 0, \
             first_seen INT UNSIGNED NOT NULL DEFAULT UNIX_TIMESTAMP(), \
             last_seen INT UNSIGNED NOT NULL DEFAULT UNIX_TIMESTAMP(), \
             PRIMARY KEY (steamid) \
@@ -60,7 +63,7 @@ public client_putinserver(id)
     if(is_user_bot(id))
         return PLUGIN_CONTINUE;
 
-    new name[32], steamid[32], ip[32], unique_key[33];
+    new name[MAX_NAME_LENGTH], steamid[MAX_AUTHID_LENGTH], ip[MAX_IP_LENGTH], unique_key[33];
 
     get_user_name(id, name, charsmax(name));
     get_user_authid(id, steamid, charsmax(steamid));
@@ -70,15 +73,17 @@ public client_putinserver(id)
 
     static query[QUERY_SIZE];
     new const len = formatex(query, charsmax(query),
-        "INSERT INTO players (steamid, name, unique_key, ip, country, first_seen, last_seen) \
-         VALUES ('%s', '%s', '%s', '%s', 'RO', UNIX_TIMESTAMP(), UNIX_TIMESTAMP()) \
-         ON DUPLICATE KEY UPDATE \
+        "INSERT INTO `players` (`steamid`, `name`, `unique_key`, `ip`, `country`, `first_seen`, `last_seen`) \
+        VALUES (^"%s^", ^"%s^", '%s', '%s', 'RO', UNIX_TIMESTAMP(), UNIX_TIMESTAMP()) \
+        ON DUPLICATE KEY UPDATE \
             name = VALUES(name), \
             ip = VALUES(ip), \
             country = VALUES(country), \
             last_seen = UNIX_TIMESTAMP()",
         steamid, name, unique_key, ip
     );
+
+    g_iJoinedTime[id] = get_systime();
 
     if(len > QUERY_SIZE)
     {
@@ -102,8 +107,7 @@ public client_disconnected(id)
     new name[MAX_NAME_LENGTH];
     get_user_name(id, name, charsmax(name));
 
-    SQL_ThreadQuery(g_hTuple, "FreeHandle", fmt("UPDATE players SET name = '%s', last_seen = UNIX_TIMESTAMP() WHERE steamid = '%s'", name, authid));
-
+    SQL_ThreadQuery(g_hTuple, "FreeHandle", fmt("UPDATE players SET name = '%s', time_played = time_played + %i, last_seen = UNIX_TIMESTAMP() WHERE steamid = '%s'", name, get_systime() - g_iJoinedTime[id], authid));
     return PLUGIN_CONTINUE;
 }
 

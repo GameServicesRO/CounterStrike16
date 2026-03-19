@@ -51,6 +51,61 @@ public plugin_init()
 
     SQL_FreeHandle(conn);
     SQL_FreeHandle(query);
+
+    register_concmd("players_generate_unique_keys", "players_generate_unique_keys_cmd");
+}
+
+public players_generate_unique_keys_cmd()
+{
+    new errorCode;
+    new errorStr[700];
+    new const Handle:conn = SQL_Connect(g_hTuple, errorCode, errorStr, charsmax(errorStr));
+
+    if(conn == Empty_Handle)
+    {
+        log_amx("Database connection error %i. %s", errorCode, errorStr);
+        return;
+    }
+
+    new Handle:query = SQL_PrepareQuery(conn, "SELECT steamid FROM players WHERE unique_key = ''");
+
+    if(!SQL_Execute(query))
+    {
+        SQL_QueryError(query, errorStr, charsmax(errorStr));
+        log_amx("Failed to execute table creation query. %s", errorStr);
+    }
+
+    new Handle:updateQuery;
+    new unique_key[33];
+    new currentSteamID[MAX_AUTHID_LENGTH];
+
+    if(SQL_NumResults(query) == 0)
+    {
+        log_amx("All players have unique keys");
+        return;
+    }
+
+    while(SQL_MoreResults(query))
+    {
+        SQL_ReadResult(query, SQL_FieldNameToNum(query, "steamid"), currentSteamID, charsmax(currentSteamID));
+
+        GenerateRandomKey(unique_key, charsmax(unique_key));
+        updateQuery = SQL_PrepareQuery(conn, "UPDATE players SET unique_key = '%s' WHERE steamid = '%s'", unique_key, currentSteamID);
+
+        if(!SQL_Execute(updateQuery))
+        {
+            SQL_QueryError(updateQuery, errorStr, charsmax(errorStr));
+            log_amx("Failed to execute update query for SteamID %s", currentSteamID);
+            SQL_NextRow(query);
+            continue;
+        }
+
+        server_print("Updated %s with %s", currentSteamID, unique_key);
+
+        SQL_NextRow(query);
+    }
+
+    return;
 }
 
 public plugin_end()

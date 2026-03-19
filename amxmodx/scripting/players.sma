@@ -96,7 +96,10 @@ public client_disconnected(id)
     new authid[MAX_AUTHID_LENGTH];
     get_user_authid(id, authid, charsmax(authid));
 
-    SQL_ThreadQuery(g_hTuple, "FreeHandle", fmt("UPDATE players SET last_seen = UNIX_TIMESTAMP() WHERE steamid = '%s'", authid));
+    new name[MAX_NAME_LENGTH];
+    get_user_name(id, name, charsmax(name));
+
+    SQL_ThreadQuery(g_hTuple, "FreeHandle", fmt("UPDATE players SET name = '%s', last_seen = UNIX_TIMESTAMP() WHERE steamid = '%s'", name, authid));
 
     return PLUGIN_CONTINUE;
 }

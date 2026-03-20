@@ -175,7 +175,9 @@ public client_disconnected(id)
     new name[MAX_NAME_LENGTH];
     get_user_name(id, name, charsmax(name));
 
-    SQL_ThreadQuery(g_hTuple, "FreeHandle", fmt("UPDATE players SET name = '%s', time_played = time_played + %i, last_seen = UNIX_TIMESTAMP() WHERE steamid = '%s'", name, get_systime() - g_iJoinedTime[id], authid));
+    new playedTime = get_systime() - g_iJoinedTime[id];
+
+    SQL_ThreadQuery(g_hTuple, "FreeHandle", fmt("UPDATE players SET name = '%s', time_played = time_played + %i, last_seen = UNIX_TIMESTAMP() WHERE steamid = '%s'", name, playedTime, authid));
     return PLUGIN_CONTINUE;
 }
 

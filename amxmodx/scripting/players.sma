@@ -1,4 +1,5 @@
 #include <amxmodx>
+#include <geoip>
 #include <sqlx>
 
 #define QUERY_SIZE 1024
@@ -104,11 +105,11 @@ public players_generate_unique_keys_cmd()
 
         server_print("Updated %s with %s", currentSteamID, unique_key);
 
+        SQL_FreeHandle(updateQuery);
         SQL_NextRow(query);
     }
 
     SQL_FreeHandle(query);
-    SQL_FreeHandle(updateQuery);
 
     return;
 }
@@ -131,16 +132,23 @@ public client_putinserver(id)
 
     GenerateRandomKey(unique_key, charsmax(unique_key));
 
+    new countryCode[3];
+    if(!geoip_code2_ex(ip, countryCode))
+    {
+        log_amx("Failed to retrieve country code for IP %s (%n)", ip, id);
+        formatex(countryCode, charsmax(countryCode), "RO");
+    }
+
     static query[QUERY_SIZE];
     new const len = formatex(query, charsmax(query),
         "INSERT INTO `players` (`steamid`, `name`, `unique_key`, `ip`, `country`, `first_seen`, `last_seen`) \
-        VALUES (^"%s^", ^"%s^", '%s', '%s', 'RO', UNIX_TIMESTAMP(), UNIX_TIMESTAMP()) \
+        VALUES (^"%s^", ^"%s^", '%s', '%s', '%s', UNIX_TIMESTAMP(), UNIX_TIMESTAMP()) \
         ON DUPLICATE KEY UPDATE \
             name = VALUES(name), \
             ip = VALUES(ip), \
             country = VALUES(country), \
             last_seen = UNIX_TIMESTAMP()",
-        steamid, name, unique_key, ip
+        steamid, name, unique_key, ip, countryCode
     );
 
     g_iJoinedTime[id] = get_systime();

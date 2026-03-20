@@ -38,19 +38,13 @@ new amx_default_access;
 
 // Platform
 
-enum _:AdminData
-{
-	DBID,
-	NAME[MAX_NAME_LENGTH + 1],
-}
-
 enum _:ExpiredAdminData
 {
-	NAME[MAX_NAME_LENGTH + 1],
+	AUTHDATA[MAX_NAME_LENGTH + 1],
+	AUTHFLAGS[16],
 	EXPIRE_TIME
 }
 
-new Array:g_aAdminSteamIDUpdateNeeded;
 new Array:g_aExpiredAdmins;
 
 public plugin_init()
@@ -94,7 +88,6 @@ public plugin_init()
 
 	remove_user_flags(0, read_flags("z"))		// Remove 'user' flag from server rights
 
-	g_aAdminSteamIDUpdateNeeded = ArrayCreate(AdminData)
 	g_aExpiredAdmins = ArrayCreate(ExpiredAdminData)
 
 	new configsDir[64]
@@ -112,7 +105,6 @@ public plugin_init()
 
 public plugin_end()
 {
-	ArrayDestroy(g_aAdminSteamIDUpdateNeeded);
 	ArrayDestroy(g_aExpiredAdmins)
 }
 
@@ -471,9 +463,9 @@ public adminSql()
 
 		set_fail_state("SQLite it's not supported");
 	} else {
-		SQL_QueryAndIgnore(sql, "CREATE TABLE IF NOT EXISTS `%s` (`id` INT(11) NOT NULL AUTO_INCREMENT, `steamid` VARCHAR( 64 ) DEFAULT NULL UNIQUE, `auth` VARCHAR( 32 ) NOT NULL UNIQUE, `password` VARCHAR( 32 ) NOT NULL, `group_id` INT(11) NOT NULL, `access` VARCHAR( 32 ) NOT NULL, `flags` VARCHAR( 32 ) NOT NULL, `mentions` VARCHAR(255) DEFAULT NULL, `expire` INT(11) NOT NULL DEFAULT 0, `hide` INT(1) NOT NULL DEFAULT 0, PRIMARY KEY(id)) COMMENT = 'AMX Mod X Admins';", table)
+		SQL_QueryAndIgnore(sql, "CREATE TABLE IF NOT EXISTS `%s` (`id` INT(11) NOT NULL AUTO_INCREMENT, `auth` VARCHAR( 64 ) NOT NULL UNIQUE, `steamid` VARCHAR( 64 ) DEFAULT NULL UNIQUE, `display_name` VARCHAR(33) NULL DEFAULT NULL, `password` VARCHAR( 32 ) NULL DEFAULT NULL, `group_id` INT(11) NOT NULL, `access` VARCHAR( 32 ) NOT NULL, `flags` VARCHAR( 32 ) NOT NULL, `mentions` VARCHAR(255) DEFAULT NULL, `expire` INT(11) NOT NULL DEFAULT 0, `hide` INT(1) NOT NULL DEFAULT 0, PRIMARY KEY(id)) COMMENT = 'AMX Mod X Admins';", table)
 		SQL_QueryAndIgnore(sql, "CREATE TABLE IF NOT EXISTS `%s_groups` (`id` INT(11) NOT NULL AUTO_INCREMENT, `name` VARCHAR( 64 ) NOT NULL UNIQUE, `flags` VARCHAR( 64 ) NOT NULL, `additional_properties` JSON NULL, `hide` INT(1) NOT NULL DEFAULT 0, PRIMARY KEY(id)) COMMENT = 'GameServices Admins Groups';", table)
-		query = SQL_PrepareQuery(sql,"SELECT `id`,`auth`,`password`,`access`,`flags`,`steamid`,`expire` FROM `%s`", table)
+		query = SQL_PrepareQuery(sql,"SELECT `id`,`auth`,`password`,`access`,`flags`,`expire` FROM `%s`", table)
 	}
 
 	if (!SQL_Execute(query))
@@ -491,16 +483,12 @@ public adminSql()
 		new const qcolPass = SQL_FieldNameToNum(query, "password")
 		new const qcolAccess = SQL_FieldNameToNum(query, "access")
 		new const qcolFlags = SQL_FieldNameToNum(query, "flags")
-		new const qcolId = SQL_FieldNameToNum(query, "id")
-		new const qcolSteamID = SQL_FieldNameToNum(query, "steamid")
 		new const qcolExpire = SQL_FieldNameToNum(query, "expire")
 
 		new AuthData[44];
 		new Password[44];
 		new Access[32];
 		new Flags[32];
-		new SteamID[MAX_AUTHID_LENGTH]
-		new id = -1;
 		new expire = 0;
 		
 		while (SQL_MoreResults(query))
@@ -512,11 +500,12 @@ public adminSql()
 
 			expire = SQL_ReadResult(query, qcolExpire);
 
-			if(equal(Flags, "a") && expire != 0 && expire < get_systime())
+			if(expire != 0 && expire < get_systime())
 			{
 				new eExpiredData[ExpiredAdminData]
 				
-				copy(eExpiredData[NAME], charsmax(eExpiredData[NAME]), AuthData)
+				copy(eExpiredData[AUTHDATA], charsmax(eExpiredData[AUTHDATA]), AuthData)
+				copy(eExpiredData[AUTHFLAGS], charsmax(eExpiredData[AUTHFLAGS]), Flags)
 				eExpiredData[EXPIRE_TIME] = expire
 				
 				ArrayPushArray(g_aExpiredAdmins, eExpiredData)
@@ -529,25 +518,6 @@ public adminSql()
 	
 			++AdminCount;
 
-			if(!equal(Flags, "a"))
-			{
-				log_amx("Platform login through Steam linking it's disabled for admin %s because he does not have auth flags set to 'a' (name and password).", AuthData)
-				SQL_NextRow(query);
-				continue;
-			}
-
-			id = SQL_ReadResult(query, qcolId);
-			SQL_ReadResult(query, qcolSteamID, SteamID, charsmax(SteamID));
-
-			if(!strlen(SteamID))
-			{
-				new eData[AdminData];
-				eData[DBID] = id;
-				copy(eData[NAME], charsmax(eData[NAME]), AuthData)
-
-				ArrayPushArray(g_aAdminSteamIDUpdateNeeded, eData)
-			}
-
 			SQL_NextRow(query)
 		}
 	
@@ -558,13 +528,6 @@ public adminSql()
 		else
 		{
 			server_print("[AMXX] %L", LANG_SERVER, "SQL_LOADED_ADMINS", AdminCount)
-		}
-
-		new const toUpdateAdminsCount = ArraySize(g_aAdminSteamIDUpdateNeeded)
-
-		if(toUpdateAdminsCount > 0)
-		{
-			server_print("[AMXX] Loaded %i admin%s which need to join the server to update SteamID in database", toUpdateAdminsCount, toUpdateAdminsCount > 1 ?  "s": "")
 		}
 		
 		SQL_FreeHandle(query)
@@ -843,20 +806,50 @@ public client_infochanged(id)
 	get_user_name(id, oldname, charsmax(oldname))
 	get_user_info(id, "name", newname, charsmax(newname))
 
+	new iAuthorizeResult = PLUGIN_HANDLED;
+
 	if (g_CaseSensitiveName[id])
 	{
 		if (!equal(newname, oldname))
 		{
-			accessUser(id, newname)
+			iAuthorizeResult = accessUser(id, newname)
 		}
 	}
 	else
 	{
 		if (!equali(newname, oldname))
 		{
-			accessUser(id, newname)
+			iAuthorizeResult = accessUser(id, newname)
 		}
 	}
+
+	if(iAuthorizeResult == PLUGIN_CONTINUE)
+	{			
+		new const count = admins_num()
+		new authflag;
+		new adminauth[MAX_AUTHID_LENGTH + 1]
+		new authid[MAX_AUTHID_LENGTH + 1]
+		get_user_authid(id, authid, charsmax(authid))
+
+		new Handle:tuple = SQL_MakeStdTuple()
+
+		for(new i = 0; i < count; i++)
+		{
+			authflag = admins_lookup(i, AdminProp_Flags)
+			admins_lookup(i, AdminProp_Auth, adminauth, charsmax(adminauth))
+		
+			if(authflag & FLAG_AUTHID && equal(authid, adminauth))
+			{
+				SQL_ThreadQuery(tuple, "FreeHandle", 
+					fmt("UPDATE `admins` SET `display_name` = ^"%s^" WHERE auth = '%s'", newname, adminauth), 
+					newname, sizeof(newname)
+				)
+
+				break;
+			}
+		}
+	}
+
 	return PLUGIN_CONTINUE
 }
 
@@ -866,57 +859,37 @@ public client_authorized(id)
 
 	if(iAuthorizeResult == PLUGIN_CONTINUE)
 	{
-		new errno;
-		static error[1024]
-		new Handle:info = SQL_MakeStdTuple()
-		new Handle:sql = SQL_Connect(info, errno, error, charsmax(error))
-		
-		if (sql == Empty_Handle)
+		new Handle:tuple = SQL_MakeStdTuple()
+
+		new name[MAX_NAME_LENGTH + 1], authid[MAX_AUTHID_LENGTH + 1]
+		get_user_name(id, name, charsmax(name))
+		get_user_authid(id, authid, charsmax(authid))
+
+		new const count = admins_num()
+		new adminauth[MAX_AUTHID_LENGTH + 1]
+
+		for(new i = 0; i < count; i++)
 		{
-			log_amx("Failed to connect to database. Error: %s", error);
-			return iAuthorizeResult;
-		}
-
-		new szName[MAX_NAME_LENGTH + 1], szAuthID[MAX_AUTHID_LENGTH]
-		get_user_name(id, szName, charsmax(szName))
-		get_user_authid(id, szAuthID, charsmax(szAuthID))
-
-		new table[32]
-		get_cvar_string("amx_sql_table", table, charsmax(table))
-
-		for(new i = 0, eData[AdminData]; i < ArraySize(g_aAdminSteamIDUpdateNeeded); i++)
-		{
-			ArrayGetArray(g_aAdminSteamIDUpdateNeeded, i, eData)
+			admins_lookup(i, AdminProp_Auth, adminauth, charsmax(adminauth))
 		
-			if(equal(eData[NAME], szName))
+			if(equal(name, adminauth) || equal(authid, adminauth))
 			{
-				SQL_ThreadQuery(
-					info, 
-					"SaveAdminSteamIDCallback", 
-					fmt("UPDATE %s SET `steamid` = '%s' WHERE id = %i", table, szAuthID, eData[DBID]),
-					szName,
-					sizeof(szName)
+				SQL_ThreadQuery(tuple, "FreeHandle", 
+					fmt("UPDATE `admins` SET `steamid` = '%s', `display_name` = ^"%s^" WHERE auth = ^"%s^"", authid, name, adminauth), 
+					name, charsmax(name)
 				)
-
 				break;
 			}
 		}
-
 	}
 	
 	return iAuthorizeResult;
 }
 
-public SaveAdminSteamIDCallback(failstate, Handle:query, error[], errnum, data[], size, Float:queuetime)
+public FreeHandle(failstate, Handle:query, error[], errnum, data[], size, Float:queuetime)
 {
 	if(failstate || errnum)
-	{
-		log_amx("[LINE: %i] An SQL Error has been encoutered while updating admin %s steamid. Error code %i^nError: %s", __LINE__, data, errnum, error);
-		SQL_FreeHandle(query);
-		return;
-	}
-
-	log_amx("Admin %s SteamID updated succesfully", data);
+		log_amx("[LINE: %i] An SQL Error has been encoutered while updating admin %s data. Error code %i^nError: %s", __LINE__, data, errnum, error);
 
 	SQL_FreeHandle(query);
 }
@@ -924,18 +897,24 @@ public SaveAdminSteamIDCallback(failstate, Handle:query, error[], errnum, data[]
 public client_putinserver(id)
 {	
 	new const iSize = ArraySize(g_aExpiredAdmins); 
-	new szName[MAX_NAME_LENGTH + 1]
+	new name[MAX_NAME_LENGTH + 1], authid[MAX_AUTHID_LENGTH + 1]
 	
-	get_user_name(id, szName, charsmax(szName))
+	get_user_name(id, name, charsmax(name))
+	get_user_authid(id, authid, charsmax(authid))
 
 	new iArrayID = -1
 	for(new i = 0, eExpiredData[ExpiredAdminData]; i < iSize; i++)
 	{
 		ArrayGetArray(g_aExpiredAdmins, i, eExpiredData)
-	
-		if(equal(szName, eExpiredData[NAME]))
+
+		if(equal(eExpiredData[AUTHFLAGS], "a") && equal(eExpiredData[AUTHDATA], name))
 		{
-			iArrayID = i
+			iArrayID = i;
+			break;
+		} 
+		else if (equal(eExpiredData[AUTHFLAGS], "ce") && equal(eExpiredData[AUTHDATA], authid))
+		{
+			iArrayID = i;
 			break;
 		}
 	}

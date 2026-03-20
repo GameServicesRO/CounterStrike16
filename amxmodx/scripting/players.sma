@@ -119,6 +119,11 @@ public plugin_end()
     SQL_FreeHandle(g_hTuple);
 }
 
+public client_connect(id)
+{
+    g_iJoinedTime[id] = get_systime();
+}
+
 public client_putinserver(id)
 {
     if(is_user_bot(id))
@@ -150,8 +155,6 @@ public client_putinserver(id)
             last_seen = UNIX_TIMESTAMP()",
         steamid, name, unique_key, ip, countryCode
     );
-
-    g_iJoinedTime[id] = get_systime();
 
     if(len > QUERY_SIZE)
     {

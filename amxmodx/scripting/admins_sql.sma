@@ -362,7 +362,6 @@ AddAdmin(id, auth[], accessflags[], password[], flags[], comment[]="")
 	SQL_FreeHandle(sql)
 	SQL_FreeHandle(info)
 #endif
-
 }
 
 loadSettings(szFilename[])

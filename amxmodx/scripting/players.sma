@@ -3,18 +3,97 @@
 #include <sqlx>
 
 #define QUERY_SIZE 1024
+#define DEBOUNCE_PANEL_KEY_DB_REQUEST_TIME 2
 
 #pragma semicolon 1
 
 new Handle:g_hTuple;
 
 new g_iJoinedTime[MAX_PLAYERS + 1];
+new g_iDebouncePanelKeyDBRequestTime[MAX_PLAYERS + 1];
 
 public plugin_init()
 {
-    register_plugin("[GS] Players", "0.3", "lexzor");
+    register_plugin("[GS] Players", "0.5", "lexzor");
 
     register_concmd("players_generate_unique_keys", "players_generate_unique_keys_cmd");
+    register_clcmd("amx_panel_key", "amx_panel_key_cmd");
+}
+
+public amx_panel_key_cmd(id)
+{
+    if(!is_user_connected(id))
+        return PLUGIN_HANDLED;
+
+    new currTime = get_systime();
+
+    if(g_iDebouncePanelKeyDBRequestTime[id] > currTime)
+    {
+        new waitSeconds = g_iDebouncePanelKeyDBRequestTime[id] - currTime;
+        client_print(id, print_console, "[GS] You have to wait %i second%s before retrieving key from database again.", waitSeconds, waitSeconds > 1 ? "s" : "");
+        return PLUGIN_HANDLED;
+    }
+
+    new authid[MAX_AUTHID_LENGTH];
+    get_user_authid(id, authid, charsmax(authid));
+
+    new data[1];
+    data[0] = id;
+
+    SQL_ThreadQuery(g_hTuple, "OnPlayerKeyRetrieved", fmt("SELECT `unique_key` FROM `players` WHERE `steamid` = '%s'", authid), data, sizeof(data));
+
+    client_print(id, print_console, "[GS] Loading key from database...");
+
+    g_iDebouncePanelKeyDBRequestTime[id] = currTime + DEBOUNCE_PANEL_KEY_DB_REQUEST_TIME;
+
+    return PLUGIN_HANDLED;
+}
+
+public OnPlayerKeyRetrieved(failstate, Handle:query, error[], errnum, data[], size, Float:queuetime)
+{
+    if(failstate || errnum)
+    {
+        log_amx("[LINE: %i] An SQL Error has been encoutered. Error code %i^nError: %s", __LINE__, errnum, error);
+        SQL_FreeHandle(query);
+        return;
+    }
+
+    new const id = data[0];
+    new const bool:isConnected = bool:is_user_connected(id);
+
+    if(SQL_NumResults(query) > 1)
+    {
+        SQL_FreeHandle(query);
+
+        log_amx("Too many keys retrieved from database for %n (duplicate SteamIDs in database)", isConnected ? id : -1);
+        if(isConnected)
+        {
+            client_print(id, print_console, "[GS] Too many keys retrieved from database because of duplicate SteamIDs. Please contact owner of the server!");
+            return;
+        }
+    }
+
+    if(!SQL_NumResults(query))
+    {
+        SQL_FreeHandle(query);
+        
+        log_amx("No key retrieved for %n (no SteamID in database)", isConnected ? id : -1);
+        if(isConnected)
+        {
+            client_print(id, print_console, "[GS] Key not found because your SteamID does not exists in database. Please contact owner of the server!");
+            return;
+        }
+    }
+
+    new uniqueKey[33];
+    SQL_ReadResult(query, SQL_FieldNameToNum(query, "unique_key"), uniqueKey, charsmax(uniqueKey));
+
+    if(isConnected)
+    {
+        client_print(id, print_console, "[GS] Key retrieved from database: %s", uniqueKey);
+    }
+
+    SQL_FreeHandle(query);
 }
 
 public OnConfigsExecuted()
@@ -124,6 +203,7 @@ public plugin_end()
 public client_connect(id)
 {
     g_iJoinedTime[id] = get_systime();
+    g_iDebouncePanelKeyDBRequestTime[id] = 0;
 }
 
 public client_putinserver(id)

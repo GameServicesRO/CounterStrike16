@@ -14,6 +14,11 @@ public plugin_init()
 {
     register_plugin("[GS] Players", "0.3", "lexzor");
 
+    register_concmd("players_generate_unique_keys", "players_generate_unique_keys_cmd");
+}
+
+public OnConfigsExecuted()
+{
     new errorCode;
     new errorStr[700];
 
@@ -24,8 +29,7 @@ public plugin_init()
     {
         log_amx("Database connection error %i. %s", errorCode, errorStr);
 
-        if(g_hTuple != Empty_Handle)
-            SQL_FreeHandle(g_hTuple);
+        SQL_FreeHandle(g_hTuple);
 
         set_fail_state("Failed to connect to database.");
     }
@@ -52,8 +56,6 @@ public plugin_init()
 
     SQL_FreeHandle(conn);
     SQL_FreeHandle(query);
-
-    register_concmd("players_generate_unique_keys", "players_generate_unique_keys_cmd");
 }
 
 public players_generate_unique_keys_cmd()

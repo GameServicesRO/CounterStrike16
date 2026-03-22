@@ -96,7 +96,7 @@ public OnPlayerKeyRetrieved(failstate, Handle:query, error[], errnum, data[], si
     SQL_FreeHandle(query);
 }
 
-public OnConfigsExecuted()
+public plugin_cfg()
 {
     new errorCode;
     new errorStr[700];

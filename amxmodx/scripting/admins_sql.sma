@@ -29,6 +29,7 @@ new PLUGINNAME[] = "AMX Mod X"
 #define ADMIN_NAME		(1<<4)
 
 #define ANNOUNCE_EXPIRED_ADMIN_TASK 432413
+#define ANNOUNCE_EXPIRED_VIP_TASK 312321
 
 new bool:g_CaseSensitiveName[MAX_PLAYERS + 1];
 
@@ -45,7 +46,15 @@ enum _:ExpiredAdminData
 	EXPIRE_TIME
 }
 
+enum _:ExpiredVIPData
+{
+	AUTHDATA[MAX_NAME_LENGTH + 1],
+	AUTHFLAGS[16],
+	EXPIRE_TIME
+}
+
 new Array:g_aExpiredAdmins;
+new Array:g_aExpiredVIPs;
 
 public plugin_init()
 {
@@ -89,6 +98,7 @@ public plugin_init()
 	remove_user_flags(0, read_flags("z"))		// Remove 'user' flag from server rights
 
 	g_aExpiredAdmins = ArrayCreate(ExpiredAdminData)
+	g_aExpiredVIPs = ArrayCreate(ExpiredVIPData)
 
 	new configsDir[64]
 	get_configsdir(configsDir, charsmax(configsDir))
@@ -106,6 +116,7 @@ public plugin_init()
 public plugin_end()
 {
 	ArrayDestroy(g_aExpiredAdmins)
+	ArrayDestroy(g_aExpiredVIPs)
 }
 
 public client_connect(id)
@@ -445,28 +456,32 @@ public adminSql()
 		return PLUGIN_HANDLED
 	}
 
-	new Handle:query
-	
 	if (equali(type, "sqlite"))
-	{
-		// if (!sqlite_TableExists(sql, table))
-		// {
-		// 	SQL_QueryAndIgnore(sql, "CREATE TABLE %s (id INT(11) NOT NULL AUTO_INCREMENT, auth TEXT NOT NULL DEFAULT '', password TEXT NOT NULL DEFAULT '', access TEXT NOT NULL DEFAULT '', flags TEXT NOT NULL DEFAULT '', mentions VARCHAR(255) NOT NULL, expire INT(11) NOT NULL DEFAULT 0, PRIMARY KEY(id))", table)
-		// }
-
-		// query = SQL_PrepareQuery(sql, "SELECT auth, password, access, flags FROM %s", table)
-	
-		SQL_FreeHandle(query)
+	{	
 		SQL_FreeHandle(sql)
 		SQL_FreeHandle(info)
 
 		set_fail_state("SQLite it's not supported");
-	} else {
-		SQL_QueryAndIgnore(sql, "CREATE TABLE IF NOT EXISTS `%s` (`id` INT(11) NOT NULL AUTO_INCREMENT, `auth` VARCHAR( 64 ) NOT NULL UNIQUE, `steamid` VARCHAR( 64 ) DEFAULT NULL UNIQUE, `display_name` VARCHAR(33) NULL DEFAULT NULL, `password` VARCHAR( 32 ) NULL DEFAULT NULL, `group_id` INT(11) NOT NULL, `access` VARCHAR( 32 ) NOT NULL, `flags` VARCHAR( 32 ) NOT NULL, `mentions` VARCHAR(255) DEFAULT NULL, `expire` INT(11) NOT NULL DEFAULT 0, `hide` INT(1) NOT NULL DEFAULT 0, PRIMARY KEY(id)) COMMENT = 'AMX Mod X Admins';", table)
-		SQL_QueryAndIgnore(sql, "CREATE TABLE IF NOT EXISTS `%s_groups` (`id` INT(11) NOT NULL AUTO_INCREMENT, `name` VARCHAR( 64 ) NOT NULL UNIQUE, `flags` VARCHAR( 64 ) NOT NULL, `additional_properties` JSON NULL, `hide` INT(1) NOT NULL DEFAULT 0, PRIMARY KEY(id)) COMMENT = 'GameServices Admins Groups';", table)
-		query = SQL_PrepareQuery(sql,"SELECT `id`,`auth`,`password`,`access`,`flags`,`expire` FROM `%s`", table)
 	}
 
+	SQL_QueryAndIgnore(sql, "CREATE TABLE IF NOT EXISTS `%s` (`id` INT(11) NOT NULL AUTO_INCREMENT, `auth` VARCHAR( 64 ) NOT NULL UNIQUE, `steamid` VARCHAR( 64 ) DEFAULT NULL UNIQUE, `display_name` VARCHAR(33) NULL DEFAULT NULL, `password` VARCHAR( 32 ) NULL DEFAULT NULL, `group_id` INT(11) NULL DEFAULT NULL, `vip_group_id` INT(11) NULL DEFAULT NULL, `access` VARCHAR( 32 ) NOT NULL, `flags` VARCHAR( 32 ) NOT NULL, `mentions` VARCHAR(255) DEFAULT NULL, `vip_expire` INT(11) NOT NULL DEFAULT 0, `expire` INT(11) NOT NULL DEFAULT 0, `hide` INT(1) NOT NULL DEFAULT 0, PRIMARY KEY(id)) COMMENT = 'AMX Mod X Admins';", table)
+	SQL_QueryAndIgnore(sql, "CREATE TABLE IF NOT EXISTS `%s_groups` (`id` INT(11) NOT NULL AUTO_INCREMENT, `name` VARCHAR( 64 ) NOT NULL UNIQUE, `is_vip_group` INT(1) NOT NULL DEFAULT 0 , `flags` VARCHAR( 64 ) NOT NULL, `additional_properties` JSON NULL, `hide` INT(1) NOT NULL DEFAULT 0, PRIMARY KEY(id)) COMMENT = 'GameServices Admins Groups';", table)
+	
+	new Handle:query = SQL_PrepareQuery(sql,
+		"SELECT \
+			a.auth AS auth, \
+			a.password AS password, \
+			a.access AS access, \
+			a.flags as flags, \
+			v.flags AS vip_access, \
+			g.flags as group_access, \
+			a.expire AS expire, \
+			a.vip_expire AS vip_expire \
+			FROM admins a \
+			LEFT JOIN admins_groups g ON a.group_id = g.id \
+			LEFT JOIN admins_groups v ON a.vip_group_id = v.id"
+		);
+	
 	if (!SQL_Execute(query))
 	{
 		SQL_QueryError(query, error, charsmax(error))
@@ -476,19 +491,24 @@ public adminSql()
 	} else {
 		
 		AdminCount = 0
-		
+
 		/** do this incase people change the query order and forget to modify below */
 		new const qcolAuth = SQL_FieldNameToNum(query, "auth")
 		new const qcolPass = SQL_FieldNameToNum(query, "password")
 		new const qcolAccess = SQL_FieldNameToNum(query, "access")
 		new const qcolFlags = SQL_FieldNameToNum(query, "flags")
 		new const qcolExpire = SQL_FieldNameToNum(query, "expire")
+		new const qcolVIPExpire = SQL_FieldNameToNum(query, "vip_expire")
+		new const qcolGroupAccess = SQL_FieldNameToNum(query, "group_access")
 
 		new AuthData[44];
 		new Password[44];
 		new Access[32];
 		new Flags[32];
 		new expire = 0;
+		new vipExpire = 0;
+		new bool:adminExpired = false
+		new bool:vipExpired = false
 		
 		while (SQL_MoreResults(query))
 		{
@@ -509,13 +529,35 @@ public adminSql()
 				
 				ArrayPushArray(g_aExpiredAdmins, eExpiredData)
 
-				SQL_NextRow(query)
-				continue;
+				adminExpired = true
 			}
 
-			admins_push(AuthData,Password,read_flags(Access),read_flags(Flags));
-	
-			++AdminCount;
+			new accessBits = read_flags(Access)
+
+			vipExpire = SQL_ReadResult(query, qcolVIPExpire);
+
+			if(vipExpire != 0 && vipExpire < get_systime())
+			{
+				new eExpiredData[ExpiredVIPData]
+				
+				copy(eExpiredData[AUTHDATA], charsmax(eExpiredData[AUTHDATA]), AuthData)
+				copy(eExpiredData[AUTHFLAGS], charsmax(eExpiredData[AUTHFLAGS]), Flags)
+				eExpiredData[EXPIRE_TIME] = expire
+
+				ArrayPushArray(g_aExpiredVIPs, eExpiredData, sizeof(eExpiredData))
+
+				new groupAccess[32]
+				SQL_ReadResult(query, qcolGroupAccess, groupAccess, charsmax(groupAccess))
+
+				accessBits = read_flags(groupAccess);
+				vipExpired = true
+			}
+
+			if(!adminExpired || !vipExpired)
+			{
+				admins_push(AuthData,Password,accessBits,read_flags(Flags));
+				++AdminCount;
+			}
 
 			SQL_NextRow(query)
 		}
@@ -895,34 +937,65 @@ public FreeHandle(failstate, Handle:query, error[], errnum, data[], size, Float:
 
 public client_putinserver(id)
 {	
-	new const iSize = ArraySize(g_aExpiredAdmins); 
+	new const iExpiredAdminsArraySize = ArraySize(g_aExpiredAdmins); 
+	new const iExpiredVIPsArraySize = ArraySize(g_aExpiredVIPs); 
 	new name[MAX_NAME_LENGTH + 1], authid[MAX_AUTHID_LENGTH + 1]
 	
 	get_user_name(id, name, charsmax(name))
 	get_user_authid(id, authid, charsmax(authid))
 
-	new iArrayID = -1
-	for(new i = 0, eExpiredData[ExpiredAdminData]; i < iSize; i++)
+	new iArrayAdminExpireID = -1
+	for(new i = 0, eExpiredData[ExpiredAdminData]; i < iExpiredAdminsArraySize; i++)
 	{
 		ArrayGetArray(g_aExpiredAdmins, i, eExpiredData)
 
 		if(equal(eExpiredData[AUTHFLAGS], "a") && equal(eExpiredData[AUTHDATA], name))
 		{
-			iArrayID = i;
+			iArrayAdminExpireID = i;
 			break;
 		} 
 		else if (equal(eExpiredData[AUTHFLAGS], "ce") && equal(eExpiredData[AUTHDATA], authid))
 		{
-			iArrayID = i;
+			iArrayAdminExpireID = i;
 			break;
 		}
 	}
 
-	if(iArrayID != -1)
+	if(iArrayAdminExpireID != -1)
 	{
-		new data[1]; data[0] = iArrayID;
+		new eData[ExpiredAdminData]
+		ArrayGetArray(g_aExpiredAdmins, iArrayAdminExpireID, eData, sizeof(eData))
+
+		new data[1]; data[0] = eData[EXPIRE_TIME];
 
 		set_task(6.0, "AnnouncePlayerOfExpiredAdmin", ANNOUNCE_EXPIRED_ADMIN_TASK + id, data, sizeof(data))
+	}
+
+	new iArrayVIPExpireID = -1
+	for(new i = 0, eExpiredData[ExpiredAdminData]; i < iExpiredVIPsArraySize; i++)
+	{
+		ArrayGetArray(g_aExpiredVIPs, i, eExpiredData)
+
+		if(equal(eExpiredData[AUTHFLAGS], "a") && equal(eExpiredData[AUTHDATA], name))
+		{
+			iArrayVIPExpireID = i;
+			break;
+		} 
+		else if (equal(eExpiredData[AUTHFLAGS], "ce") && equal(eExpiredData[AUTHDATA], authid))
+		{
+			iArrayVIPExpireID = i;
+			break;
+		}
+	}
+
+	if(iArrayVIPExpireID != -1)
+	{
+		new eData[ExpiredVIPData]
+		ArrayGetArray(g_aExpiredVIPs, iArrayVIPExpireID, eData, sizeof(eData))
+
+		new data[1]; data[0] = eData[EXPIRE_TIME];
+
+		set_task(6.0, "AnnouncePlayerOfExpiredVIP", ANNOUNCE_EXPIRED_VIP_TASK + id, data, sizeof(data))
 	}
 
 	if (!is_dedicated_server() && id == 1 && get_pcvar_num(amx_mode))
@@ -944,7 +1017,27 @@ public AnnouncePlayerOfExpiredAdmin(const data[], const TASK_ID)
 
 	UnixToTime(expiredTime, iYear, iMonth, iDay, iHour, iMinute, iSecond)
 
-	client_print_color(id, print_team_default, "Your admin expired on^4 %s%i.%s%i.%i",
+	client_print_color(id, print_team_default, "^4[GS]^1 Your admin expired on^3 %s%i.%s%i.%i",
+		iDay < 10 ? "0" : "", iDay,
+		iMonth < 10 ? "0" : "", iMonth,
+		iYear
+	)
+}
+
+public AnnouncePlayerOfExpiredVIP(const data[], const TASK_ID)
+{
+	new const id = TASK_ID - ANNOUNCE_EXPIRED_VIP_TASK;
+
+	if(!is_user_connected(id))
+		return
+
+	new const expiredTime = data[0]
+
+	new iYear, iMonth, iDay, iHour, iMinute, iSecond;
+
+	UnixToTime(expiredTime, iYear, iMonth, iDay, iHour, iMinute, iSecond)
+
+	client_print_color(id, print_team_default, "^4[GS]^1 Your VIP expired on^3 %s%i.%s%i.%i",
 		iDay < 10 ? "0" : "", iDay,
 		iMonth < 10 ? "0" : "", iMonth,
 		iYear

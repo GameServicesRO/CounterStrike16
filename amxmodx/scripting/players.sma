@@ -14,7 +14,7 @@ new g_iDebouncePanelKeyDBRequestTime[MAX_PLAYERS + 1];
 
 public plugin_init()
 {
-    register_plugin("[GS] Players", "0.5", "lexzor");
+    register_plugin("[GS] Players", "0.6", "lexzor");
 
     register_concmd("players_generate_unique_keys", "players_generate_unique_keys_cmd");
     register_clcmd("amx_panel_key", "amx_panel_key_cmd");
@@ -115,7 +115,7 @@ public plugin_cfg()
 
     new Handle:query = SQL_PrepareQuery(conn,
         "CREATE TABLE IF NOT EXISTS players (\
-            steamid VARCHAR(34), \
+            steamid VARCHAR(64), \
             name VARCHAR(33) NOT NULL, \
             unique_key VARCHAR(33) NOT NULL, \
             ip VARCHAR(45) NOT NULL, \
@@ -130,7 +130,24 @@ public plugin_cfg()
     if(!SQL_Execute(query))
     {
         SQL_QueryError(query, errorStr, charsmax(errorStr));
-        log_amx("Failed to execute table creation query. %s", errorStr);
+        log_amx("Failed to execute table creation query for table players. %s", errorStr);
+    }
+    
+    SQL_FreeHandle(query);
+
+    query = SQL_PrepareQuery(conn,
+        "CREATE TABLE IF NOT EXISTS players_sessions (\
+            steamid VARCHAR(64), \
+            joined_time INT UNSIGNED NOT NULL DEFAULT UNIX_TIMESTAMP(), \
+            left_time INT UNSIGNED NULL DEFAULT NULL, \
+            PRIMARY KEY (steamid) \
+        ) ENGINE=InnoDB;"
+    );
+
+    if(!SQL_Execute(query))
+    {
+        SQL_QueryError(query, errorStr, charsmax(errorStr));
+        log_amx("Failed to execute table creation query for table players_sessions. %s", errorStr);
     }
 
     SQL_FreeHandle(conn);
@@ -254,15 +271,17 @@ public client_disconnected(id)
     if(is_user_bot(id))
         return PLUGIN_CONTINUE;
 
+    new currentTime = get_systime()
+    new playedTime = currentTime - g_iJoinedTime[id];
+    
     new authid[MAX_AUTHID_LENGTH];
     get_user_authid(id, authid, charsmax(authid));
 
     new name[MAX_NAME_LENGTH];
     get_user_name(id, name, charsmax(name));
 
-    new playedTime = get_systime() - g_iJoinedTime[id];
-
-    SQL_ThreadQuery(g_hTuple, "FreeHandle", fmt("UPDATE players SET name = '%s', time_played = time_played + %i, last_seen = UNIX_TIMESTAMP() WHERE steamid = '%s'", name, playedTime, authid));
+    SQL_ThreadQuery(g_hTuple, "FreeHandle", fmt("UPDATE players SET name = ^"%s^", time_played = time_played + %i, last_seen = UNIX_TIMESTAMP() WHERE steamid = '%s'", name, playedTime, authid));
+    
     return PLUGIN_CONTINUE;
 }
 

@@ -14,7 +14,7 @@ new g_iDebouncePanelKeyDBRequestTime[MAX_PLAYERS + 1];
 
 public plugin_init()
 {
-    register_plugin("[GS] Players", "0.6", "lexzor");
+    register_plugin("[GS] Players", "0.6.1", "lexzor");
 
     register_concmd("players_generate_unique_keys", "players_generate_unique_keys_cmd");
     register_clcmd("amx_panel_key", "amx_panel_key_cmd");
@@ -101,22 +101,32 @@ public plugin_cfg()
     new errorCode;
     new errorStr[700];
 
+    if(!SQL_SetAffinity("mysql"))
+    {
+        set_fail_state("Failed to set affinity for SQL. Affinity: mysql");
+    }
+    
     g_hTuple = SQL_MakeStdTuple();
+
+    if(!SQL_SetCharset(g_hTuple, "utf8mb4"))
+    {
+        log_amx("Failed to set charset for SQL connection tuple. Charset: utf8mb4");
+    }
+
     new const Handle:conn = SQL_Connect(g_hTuple, errorCode, errorStr, charsmax(errorStr));
 
     if(conn == Empty_Handle)
     {
-        log_amx("Database connection error %i. %s", errorCode, errorStr);
-
         SQL_FreeHandle(g_hTuple);
 
+        log_amx("Database connection error %i. %s", errorCode, errorStr);
         set_fail_state("Failed to connect to database.");
     }
 
     new Handle:query = SQL_PrepareQuery(conn,
         "CREATE TABLE IF NOT EXISTS players (\
             steamid VARCHAR(64), \
-            name VARCHAR(33) NOT NULL, \
+            name VARCHAR(64) NOT NULL, \
             unique_key VARCHAR(33) NOT NULL, \
             ip VARCHAR(45) NOT NULL, \
             country CHAR(2) NOT NULL, \
@@ -243,6 +253,9 @@ public client_putinserver(id)
         formatex(countryCode, charsmax(countryCode), "RO");
     }
 
+    new escapedName[MAX_NAME_LENGTH * 2 + 1];
+    SQL_QuoteString(Empty_Handle, escapedName, charsmax(escapedName), name);
+
     static query[QUERY_SIZE];
     new const len = formatex(query, charsmax(query),
         "INSERT INTO `players` (`steamid`, `name`, `unique_key`, `ip`, `country`, `first_seen`, `last_seen`) \
@@ -252,7 +265,7 @@ public client_putinserver(id)
             ip = VALUES(ip), \
             country = VALUES(country), \
             last_seen = UNIX_TIMESTAMP()",
-        steamid, name, unique_key, ip, countryCode
+        steamid, escapedName, unique_key, ip, countryCode
     );
 
     if(len > QUERY_SIZE)
@@ -271,7 +284,7 @@ public client_disconnected(id)
     if(is_user_bot(id))
         return PLUGIN_CONTINUE;
 
-    new currentTime = get_systime()
+    new currentTime = get_systime();
     new playedTime = currentTime - g_iJoinedTime[id];
     
     new authid[MAX_AUTHID_LENGTH];
@@ -280,7 +293,10 @@ public client_disconnected(id)
     new name[MAX_NAME_LENGTH];
     get_user_name(id, name, charsmax(name));
 
-    SQL_ThreadQuery(g_hTuple, "FreeHandle", fmt("UPDATE players SET name = ^"%s^", time_played = time_played + %i, last_seen = UNIX_TIMESTAMP() WHERE steamid = '%s'", name, playedTime, authid));
+    new escapedName[MAX_NAME_LENGTH * 2 + 1];
+    SQL_QuoteString(Empty_Handle, escapedName, charsmax(escapedName), name);
+
+    SQL_ThreadQuery(g_hTuple, "FreeHandle", fmt("UPDATE players SET name = ^"%s^", time_played = time_played + %i, last_seen = UNIX_TIMESTAMP() WHERE steamid = '%s'", escapedName, playedTime, authid));
     
     return PLUGIN_CONTINUE;
 }

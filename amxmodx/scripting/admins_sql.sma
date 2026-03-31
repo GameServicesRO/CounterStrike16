@@ -290,6 +290,11 @@ AddAdmin(id, auth[], accessflags[], password[], flags[], comment[]="")
 #if defined USING_SQL
 	new error[128], errno
 
+	if(SQL_SetAffinity("mysql"))
+	{
+		set_fail_state("Only MySQL is supported, make sure to set amx_sql_type to mysql")
+	}
+
 	new Handle:info = SQL_MakeStdTuple()
 	new Handle:sql = SQL_Connect(info, errno, error, charsmax(error))
 	
@@ -436,6 +441,7 @@ public adminSql()
 	new table[32], error[128], type[12], errno
 	
 	new Handle:info = SQL_MakeStdTuple()
+
 	new Handle:sql = SQL_Connect(info, errno, error, charsmax(error))
 	
 	get_cvar_string("amx_sql_table", table, charsmax(table))
@@ -464,7 +470,7 @@ public adminSql()
 		set_fail_state("SQLite it's not supported");
 	}
 
-	SQL_QueryAndIgnore(sql, "CREATE TABLE IF NOT EXISTS `%s` (`id` INT(11) NOT NULL AUTO_INCREMENT, `auth` VARCHAR( 64 ) NOT NULL UNIQUE, `steamid` VARCHAR( 64 ) DEFAULT NULL UNIQUE, `display_name` VARCHAR(33) NULL DEFAULT NULL, `password` VARCHAR( 32 ) NULL DEFAULT NULL, `group_id` INT(11) NULL DEFAULT NULL, `vip_group_id` INT(11) NULL DEFAULT NULL, `access` VARCHAR( 32 ) NOT NULL, `flags` VARCHAR( 32 ) NOT NULL, `mentions` VARCHAR(255) DEFAULT NULL, `vip_expire` INT(11) NOT NULL DEFAULT 0, `expire` INT(11) NOT NULL DEFAULT 0, `hide` INT(1) NOT NULL DEFAULT 0, PRIMARY KEY(id)) COMMENT = 'AMX Mod X Admins';", table)
+	SQL_QueryAndIgnore(sql, "CREATE TABLE IF NOT EXISTS `%s` (`id` INT(11) NOT NULL AUTO_INCREMENT, `auth` VARCHAR( 64 ) NOT NULL UNIQUE, `steamid` VARCHAR( 64 ) DEFAULT NULL UNIQUE, `display_name` VARCHAR(64) NULL DEFAULT NULL, `password` VARCHAR( 32 ) NULL DEFAULT NULL, `group_id` INT(11) NULL DEFAULT NULL, `vip_group_id` INT(11) NULL DEFAULT NULL, `access` VARCHAR( 32 ) NOT NULL, `flags` VARCHAR( 32 ) NOT NULL, `mentions` VARCHAR(255) DEFAULT NULL, `vip_expire` INT(11) NOT NULL DEFAULT 0, `expire` INT(11) NOT NULL DEFAULT 0, `hide` INT(1) NOT NULL DEFAULT 0, PRIMARY KEY(id)) COMMENT = 'AMX Mod X Admins';", table)
 	SQL_QueryAndIgnore(sql, "CREATE TABLE IF NOT EXISTS `%s_groups` (`id` INT(11) NOT NULL AUTO_INCREMENT, `name` VARCHAR( 64 ) NOT NULL UNIQUE, `is_vip_group` INT(1) NOT NULL DEFAULT 0 , `flags` VARCHAR( 64 ) NOT NULL, `additional_properties` JSON NULL, `hide` INT(1) NOT NULL DEFAULT 0, PRIMARY KEY(id)) COMMENT = 'GameServices Admins Groups';", table)
 	
 	new Handle:query = SQL_PrepareQuery(sql,
@@ -870,9 +876,15 @@ public client_infochanged(id)
 		new authflag;
 		new adminauth[MAX_AUTHID_LENGTH + 1]
 		new authid[MAX_AUTHID_LENGTH + 1]
+		new escapedName[MAX_NAME_LENGTH * 2]
 		get_user_authid(id, authid, charsmax(authid))
 
 		new Handle:tuple = SQL_MakeStdTuple()
+	
+		if(!SQL_SetCharset(tuple, "utf8mb4"))
+		{
+			log_amx("Failed to set charset for SQL connection tuple. Charset: utf8mb4");
+		}
 
 		for(new i = 0; i < count; i++)
 		{
@@ -881,8 +893,9 @@ public client_infochanged(id)
 		
 			if(authflag & FLAG_AUTHID && equal(authid, adminauth))
 			{
+				SQL_QuoteString(Empty_Handle, escapedName, charsmax(escapedName), newname);
 				SQL_ThreadQuery(tuple, "FreeHandle", 
-					fmt("UPDATE `admins` SET `display_name` = ^"%s^" WHERE auth = '%s'", newname, adminauth), 
+					fmt("UPDATE `admins` SET `display_name` = ^"%s^" WHERE auth = '%s'", escapedName, adminauth), 
 					newname, sizeof(newname)
 				)
 
@@ -902,12 +915,18 @@ public client_authorized(id)
 	{
 		new Handle:tuple = SQL_MakeStdTuple()
 
+		if(!SQL_SetCharset(tuple, "utf8mb4"))
+		{
+			log_amx("Failed to set charset for SQL connection tuple. Charset: utf8mb4");
+		}
+
 		new name[MAX_NAME_LENGTH + 1], authid[MAX_AUTHID_LENGTH + 1]
 		get_user_name(id, name, charsmax(name))
 		get_user_authid(id, authid, charsmax(authid))
 
 		new const count = admins_num()
 		new adminauth[MAX_AUTHID_LENGTH + 1]
+		new escapedName[MAX_NAME_LENGTH * 2]
 
 		for(new i = 0; i < count; i++)
 		{
@@ -915,8 +934,9 @@ public client_authorized(id)
 		
 			if(equal(name, adminauth) || equal(authid, adminauth))
 			{
+				SQL_QuoteString(Empty_Handle, escapedName, charsmax(escapedName), name);
 				SQL_ThreadQuery(tuple, "FreeHandle", 
-					fmt("UPDATE `admins` SET `steamid` = '%s', `display_name` = ^"%s^" WHERE auth = ^"%s^"", authid, name, adminauth), 
+					fmt("UPDATE `admins` SET `steamid` = '%s', `display_name` = ^"%s^" WHERE auth = ^"%s^"", authid, escapedName, adminauth), 
 					name, charsmax(name)
 				)
 				break;

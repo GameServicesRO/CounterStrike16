@@ -237,7 +237,7 @@
 #endif
 
 #define REGEX_IP_PATTERN "\b(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\b"
-#define REGEX_STEAMID_PATTERN "^^STEAM_(0|1):(0|1):\d+$"
+#define REGEX_STEAMID_PATTERN "^^STEAM_[0-9]:[0-9]:[0-9]+$"
 
 new Regex:g_IP_pattern;
 new Regex:g_SteamID_pattern;

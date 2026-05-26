@@ -43,7 +43,7 @@ new HookChain:g_hcPlayerKilledHook;
 
 public plugin_init()
 {
-    register_plugin("[GS] Players", "0.7.8", "lexzor");
+    register_plugin("[GS] Players", "0.7.9", "lexzor");
 
     register_concmd("players_generate_unique_keys", "players_generate_unique_keys_cmd");
     register_clcmd("amx_panel_key", "amx_panel_key_cmd");
@@ -473,8 +473,6 @@ public OnPlayerSessionDataRetrieved(failstate, Handle:query, error[], errnum, da
     g_ePlayersSessions[id][KILLS] = json_object_get_number(playerSession, "kills");
     g_ePlayersSessions[id][DEATHS] = json_object_get_number(playerSession, "deaths");
     g_ePlayersSessions[id][DAMAGE] = json_object_get_number(playerSession, "damage");
-
-    server_print("----- %i %i %i", g_ePlayersSessions[id][KILLS], g_ePlayersSessions[id][DEATHS], g_ePlayersSessions[id][DAMAGE]);
 
     json_free(playerSession);
 

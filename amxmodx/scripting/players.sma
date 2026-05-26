@@ -39,15 +39,17 @@ new bool:g_bPendingDisconnect[MAX_PLAYERS + 1];
 new g_iPendingDisconnectTime[MAX_PLAYERS + 1];
 
 new HookChain:g_hcTakeDamageHook;
+new HookChain:g_hcPlayerKilledHook;
 
 public plugin_init()
 {
-    register_plugin("[GS] Players", "0.7.4", "lexzor");
+    register_plugin("[GS] Players", "0.7.5", "lexzor");
 
     register_concmd("players_generate_unique_keys", "players_generate_unique_keys_cmd");
     register_clcmd("amx_panel_key", "amx_panel_key_cmd");
 
     g_hcTakeDamageHook = RegisterHookChain(RG_CBasePlayer_TakeDamage, "RG_CBasePlayer_TakeDamage_Post", _:true);
+    g_hcPlayerKilledHook = RegisterHookChain(RG_CSGameRules_PlayerKilled, "RG_CSGameRules_PlayerKilled_Post", _:true);
 }
 
 public RG_CBasePlayer_TakeDamage_Post(const this, pevInflictor, pevAttacker, Float:flDamage, bitsDamageType)
@@ -61,6 +63,19 @@ public RG_CBasePlayer_TakeDamage_Post(const this, pevInflictor, pevAttacker, Flo
     g_ePlayersSessions[pevAttacker][DAMAGE] += floatround(flDamage);
 
     return HC_CONTINUE;
+}
+
+public RG_CSGameRules_PlayerKilled_Post(const victim, const killer, const inflictor)
+{
+    if(is_user_connected(victim) && g_ePlayerDatabaseState[victim] == DatabaseState:DATA_RETRIEVED)
+    {
+        g_ePlayersSessions[victim][DEATHS]++;
+    }
+    
+    if(is_user_connected(killer) && g_ePlayerDatabaseState[killer] == DatabaseState:DATA_RETRIEVED)
+    {
+        g_ePlayersSessions[killer][KILLS]++;
+    }
 }
 
 public amx_panel_key_cmd(id)
@@ -148,6 +163,9 @@ public plugin_cfg()
     {
         if(g_hcTakeDamageHook != INVALID_HOOKCHAIN)
             DisableHookChain(g_hcTakeDamageHook);
+  
+        if(g_hcPlayerKilledHook != INVALID_HOOKCHAIN)
+            DisableHookChain(g_hcPlayerKilledHook);
 
         set_fail_state("Failed to set affinity for SQL. Affinity: mysql");
     }
@@ -165,6 +183,9 @@ public plugin_cfg()
     {
         if(g_hcTakeDamageHook != INVALID_HOOKCHAIN)
             DisableHookChain(g_hcTakeDamageHook);
+
+        if(g_hcPlayerKilledHook != INVALID_HOOKCHAIN)
+            DisableHookChain(g_hcPlayerKilledHook);
 
         SQL_FreeHandle(g_hTuple);
 
@@ -267,7 +288,7 @@ public players_generate_unique_keys_cmd()
     }
 
     SQL_FreeHandle(query);
-
+    SQL_FreeHandle(conn);
     return;
 }
 
@@ -358,7 +379,7 @@ public client_disconnected(id)
     SQL_QuoteString(Empty_Handle, escapedName, charsmax(escapedName), name);
 
     SQL_ThreadQuery(g_hTuple, "FreeHandle", fmt("UPDATE players SET name = ^"%s^", time_played = time_played + %i, last_seen = UNIX_TIMESTAMP() WHERE steamid = '%s'", escapedName, playedTime, authid));
-    
+
     if(g_ePlayerDatabaseState[id] == DatabaseState:DATA_RETRIEVED)
     {
         SavePlayerSession(id);
@@ -377,7 +398,9 @@ ManagePlayerSession(const id)
     new authid[MAX_AUTHID_LENGTH];
     get_user_authid(id, authid, charsmax(authid));
 
-    new data[1]; data[0] = id;
+    new data[2];
+    data[0] = id;
+    data[1] = g_ePlayersSessions[id][JOINED_TIME];
 
     g_ePlayerDatabaseState[id] = DatabaseState:WAITING_DATA;
     SQL_ThreadQuery(g_hTuple, "OnPlayerSessionDataRetrieved", fmt("SELECT * from players_sessions WHERE steamid = '%s' AND left_time > (UNIX_TIMESTAMP() - 60)", authid), data, sizeof(data));
@@ -393,6 +416,14 @@ public OnPlayerSessionDataRetrieved(failstate, Handle:query, error[], errnum, da
     }
 
     new const id = data[0];
+    new const joinedTime = data[1];
+
+    // Callback belongs to a previous occupant of this slot, discard it
+    if(g_ePlayersSessions[id][JOINED_TIME] != joinedTime)
+    {
+        SQL_FreeHandle(query);
+        return;
+    }
 
     g_ePlayerDatabaseState[id] = DatabaseState:DATA_RETRIEVED;
 
@@ -412,7 +443,7 @@ public OnPlayerSessionDataRetrieved(failstate, Handle:query, error[], errnum, da
 
     if(SQL_NumResults(query) == 0)
     {
-        CreateNewPlayerSession(id);
+        CreateNewPlayerSession(id, true);
         goto cleanup;
     }
 
@@ -454,9 +485,9 @@ public OnPlayerSessionDataRetrieved(failstate, Handle:query, error[], errnum, da
     SQL_FreeHandle(query);
 }
 
-CreateNewPlayerSession(const id)
+CreateNewPlayerSession(const id, const bool:immediate_close = false)
 {
-    if(!is_user_connected(id) && !is_user_connecting(id))
+    if(!immediate_close && !is_user_connected(id) && !is_user_connecting(id))
         return;
 
     new authid[MAX_AUTHID_LENGTH];
@@ -486,7 +517,8 @@ CreateNewPlayerSession(const id)
         if(g_hcTakeDamageHook != INVALID_HOOKCHAIN)
             DisableHookChain(g_hcTakeDamageHook);
 
-        SQL_FreeHandle(conn);
+        if(g_hcPlayerKilledHook != INVALID_HOOKCHAIN)
+            DisableHookChain(g_hcPlayerKilledHook);
 
         log_amx("Database connection error %i. %s", errorCode, errorStr);
         set_fail_state("Failed to connect to database.");
@@ -526,15 +558,16 @@ SavePlayerSession(const id)
         return;
     }
 
-    json_object_set_number(data, "kills", g_ePlayersSessions[id][KILLS] + get_entvar(id, var_frags));
-    json_object_set_number(data, "deaths", g_ePlayersSessions[id][DEATHS] + get_member(id, m_iDeaths));
+    json_object_set_number(data, "kills", g_ePlayersSessions[id][KILLS]);
+    json_object_set_number(data, "deaths", g_ePlayersSessions[id][DEATHS]);
     json_object_set_number(data, "damage", g_ePlayersSessions[id][DAMAGE]);
 
     new queryData[512];
     json_serial_to_string(data, queryData, charsmax(queryData));
     json_free(data);
 
-    formatex(query, charsmax(query), "UPDATE players_sessions SET left_time = %i, data = '%s' WHERE id = %i AND steamid = '%s'", get_systime(), queryData, g_ePlayersSessions[id][ID], authid);
+    new leftTime = g_bPendingDisconnect[id] ? g_iPendingDisconnectTime[id] : get_systime();
+    formatex(query, charsmax(query), "UPDATE players_sessions SET left_time = %i, data = '%s' WHERE id = %i AND steamid = '%s'", leftTime, queryData, g_ePlayersSessions[id][ID], authid);
 
     SQL_ThreadQuery(g_hTuple, "FreeHandle", query);
 }

@@ -1,20 +1,42 @@
 #include <amxmodx>
 #include <geoip>
 #include <sqlx>
+#include <json>
 
 #define QUERY_SIZE 1024
 #define DEBOUNCE_PANEL_KEY_DB_REQUEST_TIME 2
 
 #pragma semicolon 1
 
+const NO_SESSION_ID = 0;
+
+enum _:PlayerSession
+{
+    ID,
+    JOINED_TIME,
+    LEFT_TIME,
+    KILLS,
+    DEATHS,
+    DAMAGE
+}
+
+enum DatabaseState
+{
+    DATA_NOT_RETRIEVED,
+    WAITING_DATA,
+    DATA_RETRIEVED,
+    FAILED_TO_RETRIEVE_DATA
+}
+
 new Handle:g_hTuple;
 
-new g_iJoinedTime[MAX_PLAYERS + 1];
+new g_ePlayersSessions[MAX_PLAYERS + 1][PlayerSession];
+new DatabaseState:g_ePlayerDatabaseState[MAX_PLAYERS + 1];
 new g_iDebouncePanelKeyDBRequestTime[MAX_PLAYERS + 1];
 
 public plugin_init()
 {
-    register_plugin("[GS] Players", "0.6.1", "lexzor");
+    register_plugin("[GS] Players", "0.7.0", "lexzor");
 
     register_concmd("players_generate_unique_keys", "players_generate_unique_keys_cmd");
     register_clcmd("amx_panel_key", "amx_panel_key_cmd");
@@ -147,10 +169,12 @@ public plugin_cfg()
 
     query = SQL_PrepareQuery(conn,
         "CREATE TABLE IF NOT EXISTS players_sessions (\
+            id INT(11) NOT NULL AUTO_INCREMENT, \
             steamid VARCHAR(64), \
-            joined_time INT UNSIGNED NOT NULL DEFAULT UNIX_TIMESTAMP(), \
+            joined_time INT UNSIGNED NOT NULL DEFAULT (UNIX_TIMESTAMP()), \
             left_time INT UNSIGNED NULL DEFAULT NULL, \
-            PRIMARY KEY (steamid) \
+            data JSON NULL, \
+            PRIMARY KEY (id) \
         ) ENGINE=InnoDB;"
     );
 
@@ -229,7 +253,14 @@ public plugin_end()
 
 public client_connect(id)
 {
-    g_iJoinedTime[id] = get_systime();
+    g_ePlayersSessions[id][ID] = NO_SESSION_ID;
+    g_ePlayersSessions[id][JOINED_TIME] = get_systime();
+    g_ePlayersSessions[id][LEFT_TIME] = 0;
+    g_ePlayersSessions[id][KILLS] = 0;
+    g_ePlayersSessions[id][DEATHS] = 0;
+    g_ePlayersSessions[id][DAMAGE] = 0;
+
+    g_ePlayerDatabaseState[id] = DatabaseState:DATA_NOT_RETRIEVED;
     g_iDebouncePanelKeyDBRequestTime[id] = 0;
 }
 
@@ -276,6 +307,8 @@ public client_putinserver(id)
 
     SQL_ThreadQuery(g_hTuple, "FreeHandle", query);
 
+    ManagePlayerSession(id);
+
     return PLUGIN_CONTINUE;
 }
 
@@ -285,7 +318,7 @@ public client_disconnected(id)
         return PLUGIN_CONTINUE;
 
     new currentTime = get_systime();
-    new playedTime = currentTime - g_iJoinedTime[id];
+    new playedTime = currentTime - g_ePlayersSessions[id][JOINED_TIME];
     
     new authid[MAX_AUTHID_LENGTH];
     get_user_authid(id, authid, charsmax(authid));
@@ -298,7 +331,155 @@ public client_disconnected(id)
 
     SQL_ThreadQuery(g_hTuple, "FreeHandle", fmt("UPDATE players SET name = ^"%s^", time_played = time_played + %i, last_seen = UNIX_TIMESTAMP() WHERE steamid = '%s'", escapedName, playedTime, authid));
     
+    if(g_ePlayerDatabaseState[id] == DatabaseState:DATA_RETRIEVED)
+    {
+        SavePlayerSession(id);
+    }
+
     return PLUGIN_CONTINUE;
+}
+
+ManagePlayerSession(const id)
+{
+    new authid[MAX_AUTHID_LENGTH];
+    get_user_authid(id, authid, charsmax(authid));
+
+    new data[1]; data[0] = id;
+
+    g_ePlayerDatabaseState[id] = DatabaseState:WAITING_DATA;
+    SQL_ThreadQuery(g_hTuple, "OnPlayerSessionDataRetrieved", fmt("SELECT * from players_sessions WHERE steamid = '%s' AND left_time > (UNIX_TIMESTAMP() - 60)", authid), data, sizeof(data));
+}
+
+public OnPlayerSessionDataRetrieved(failstate, Handle:query, error[], errnum, data[], size, Float:queuetime)
+{
+    if(failstate || errnum)
+    {
+        log_amx("[LINE: %i] An SQL Error has been encoutered. Error code %i^nError: %s", __LINE__, errnum, error);
+        SQL_FreeHandle(query);
+        return;
+    }
+
+    new const id = data[0];
+
+    g_ePlayerDatabaseState[id] = DatabaseState:DATA_RETRIEVED;
+
+    if(!is_user_connected(id))
+        return;
+
+    if(SQL_NumResults(query) == 0)
+    {
+        new authid[MAX_AUTHID_LENGTH];
+        get_user_authid(id, authid, charsmax(authid));
+
+        new JSON:data = json_init_object();
+
+        if(data == Invalid_JSON)
+        {
+            log_amx("Failed to initialize JSON object");
+            return;
+        }
+
+        json_object_set_number(data, "kills", 0);
+        json_object_set_number(data, "deaths", 0);
+        json_object_set_number(data, "damage", 0);
+
+        new queryData[512];
+        json_serial_to_string(data, queryData, charsmax(queryData));
+        json_free(data);
+
+        SQL_ThreadQuery(g_hTuple, "OnPlayerSessionCreated", fmt("INSERT INTO `players_sessions` \
+            (steamid, joined_time, left_time, data) \
+            VALUES ('%s', %i, %i, '%s');",
+            authid, g_ePlayersSessions[id][JOINED_TIME], 0, queryData, data, sizeof(data))
+        );
+
+        goto cleanup;
+    }
+
+    if(SQL_NumResults(query) > 1)
+    {
+        log_amx("Retrieving player session for %N retrieved more than 1 session", id);
+        return;
+    }
+
+    new sessionData[512];
+    SQL_ReadResult(query, SQL_FieldNameToNum(query, "data"), sessionData, charsmax(sessionData));
+
+    new JSON:playerSession = json_init_object();
+
+    if(playerSession == Invalid_JSON)
+    {
+        log_amx("Failed to parse player session data json for %N", id);
+        goto cleanup;
+    }
+
+    json_object_set_string(playerSession, "", sessionData);
+
+    g_ePlayersSessions[id][ID] = SQL_ReadResult(query, SQL_FieldNameToNum(query, "id"));
+    g_ePlayersSessions[id][JOINED_TIME] = SQL_ReadResult(query, SQL_FieldNameToNum(query, "joined_time"));
+    g_ePlayersSessions[id][LEFT_TIME] = SQL_ReadResult(query, SQL_FieldNameToNum(query, "left_time"));
+
+    g_ePlayersSessions[id][KILLS] = json_object_get_number(playerSession, "kills");
+    g_ePlayersSessions[id][DEATHS] = json_object_get_number(playerSession, "deaths");
+    g_ePlayersSessions[id][DAMAGE] = json_object_get_number(playerSession, "damage");
+
+    json_free(playerSession);
+
+    new authid[MAX_AUTHID_LENGTH];
+    get_user_authid(id, authid, charsmax(authid));
+
+    SQL_ThreadQuery(g_hTuple, "FreeHandle", fmt("UPDATE players_sessions SET left_time = 0 WHERE id = %i AND steamid = '%s'", g_ePlayersSessions[id][ID], authid));
+
+    cleanup:
+    SQL_FreeHandle(query);
+}
+
+public OnPlayerSessionCreated(failstate, Handle:query, error[], errnum, data[], size, Float:queuetime)
+{
+    if(failstate || errnum)
+    {
+        log_amx("[LINE: %i] An SQL Error has been encoutered. Error code %i^nError: %s", __LINE__, errnum, error);
+        SQL_FreeHandle(query);
+        return;
+    }
+
+    new const id = data[0];
+
+    if(!is_user_connected(id) && !is_user_connecting(id))
+        return;
+
+    g_ePlayersSessions[id][ID] = SQL_GetInsertId(query);
+
+    SQL_FreeHandle(query);
+}
+
+SavePlayerSession(const id)
+{
+    static query[2048];
+    new authid[MAX_AUTHID_LENGTH];
+    get_user_authid(id, authid, charsmax(authid));
+
+    new JSON:data = json_init_object();
+
+    if(data == Invalid_JSON)
+    {
+        log_amx("Failed to initialize JSON object");
+        return;
+    }
+
+    json_object_set_number(data, "kills", g_ePlayersSessions[id][KILLS]);
+    json_object_set_number(data, "deaths", g_ePlayersSessions[id][DEATHS]);
+    json_object_set_number(data, "damage", g_ePlayersSessions[id][DAMAGE]);
+
+    new queryData[512];
+    json_serial_to_string(data, queryData, charsmax(queryData));
+    json_free(data);
+
+    formatex(query, charsmax(query), "UPDATE players_sessions SET left_time = %i, data = '%s' WHERE id = %i AND steamid = '%s'", get_systime(), queryData, g_ePlayersSessions[id][ID], authid);
+
+    server_print("info: %s", query);
+
+    SQL_ThreadQuery(g_hTuple, "FreeHandle", query);
 }
 
 public FreeHandle(failstate, Handle:query, error[], errnum, data[], size, Float:queuetime)

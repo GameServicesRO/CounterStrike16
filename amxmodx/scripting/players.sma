@@ -474,13 +474,19 @@ CreateNewPlayerSession(const id)
 
     new Handle:query = SQL_PrepareQuery(conn, "INSERT INTO `players_sessions` \
         (steamid, joined_time, left_time, data) \
-        VALUES ('%s', %i, %i, ^"%s^");",
+        VALUES (^"%s^", %i, %i, '%s');",
         authid, g_ePlayersSessions[id][JOINED_TIME], 0, queryData
     );
 
+    server_print("%s",fmt("INSERT INTO `players_sessions` \
+        (steamid, joined_time, left_time, data) \
+        VALUES (^"%s^", %i, %i, '%s');",
+        authid, g_ePlayersSessions[id][JOINED_TIME], 0, queryData));
+
     if(!SQL_Execute(query))
     {
-        log_amx("Failed to create new session for %N", id);
+        SQL_QueryError(query, errorStr, charsmax(errorStr));
+        log_amx("Failed to create new session for %N. %s", id, errorStr);
         SQL_FreeHandle(query);
         SQL_FreeHandle(conn);
         return;
@@ -513,7 +519,7 @@ SavePlayerSession(const id)
     json_serial_to_string(data, queryData, charsmax(queryData));
     json_free(data);
 
-    formatex(query, charsmax(query), "UPDATE players_sessions SET left_time = %i, data = ^"%s^" WHERE id = %i AND steamid = '%s'", get_systime(), queryData, g_ePlayersSessions[id][ID], authid);
+    formatex(query, charsmax(query), "UPDATE players_sessions SET left_time = %i, data = '%s' WHERE id = %i AND steamid = '%s'", get_systime(), queryData, g_ePlayersSessions[id][ID], authid);
 
     server_print("info: %s", query);
 

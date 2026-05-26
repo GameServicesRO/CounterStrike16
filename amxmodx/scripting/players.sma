@@ -2,6 +2,7 @@
 #include <geoip>
 #include <sqlx>
 #include <json>
+#include <reapi>
 
 #define QUERY_SIZE 1024
 #define DEBOUNCE_PANEL_KEY_DB_REQUEST_TIME 2
@@ -34,12 +35,29 @@ new g_ePlayersSessions[MAX_PLAYERS + 1][PlayerSession];
 new DatabaseState:g_ePlayerDatabaseState[MAX_PLAYERS + 1];
 new g_iDebouncePanelKeyDBRequestTime[MAX_PLAYERS + 1];
 
+new HookChain:g_hcTakeDamageHook;
+
 public plugin_init()
 {
-    register_plugin("[GS] Players", "0.7.0", "lexzor");
+    register_plugin("[GS] Players", "0.7.2", "lexzor");
 
     register_concmd("players_generate_unique_keys", "players_generate_unique_keys_cmd");
     register_clcmd("amx_panel_key", "amx_panel_key_cmd");
+
+    g_hcTakeDamageHook = RegisterHookChain(RG_CBasePlayer_TakeDamage, "RG_CBasePlayer_TakeDamage_Post", _:true);
+}
+
+public RG_CBasePlayer_TakeDamage_Post(const this, pevInflictor, pevAttacker, Float:flDamage, bitsDamageType)
+{
+    if(!is_user_connected(pevAttacker))
+        return HC_CONTINUE;
+
+    if(g_ePlayerDatabaseState[pevAttacker] != DatabaseState:DATA_RETRIEVED)
+        return HC_CONTINUE;
+
+    g_ePlayersSessions[pevAttacker][DAMAGE] += floatround(flDamage);
+
+    return HC_CONTINUE;
 }
 
 public amx_panel_key_cmd(id)
@@ -125,6 +143,9 @@ public plugin_cfg()
 
     if(!SQL_SetAffinity("mysql"))
     {
+        if(g_hcTakeDamageHook != INVALID_HOOKCHAIN)
+            DisableHookChain(g_hcTakeDamageHook);
+
         set_fail_state("Failed to set affinity for SQL. Affinity: mysql");
     }
     
@@ -139,6 +160,9 @@ public plugin_cfg()
 
     if(conn == Empty_Handle)
     {
+        if(g_hcTakeDamageHook != INVALID_HOOKCHAIN)
+            DisableHookChain(g_hcTakeDamageHook);
+
         SQL_FreeHandle(g_hTuple);
 
         log_amx("Database connection error %i. %s", errorCode, errorStr);
@@ -368,31 +392,7 @@ public OnPlayerSessionDataRetrieved(failstate, Handle:query, error[], errnum, da
 
     if(SQL_NumResults(query) == 0)
     {
-        new authid[MAX_AUTHID_LENGTH];
-        get_user_authid(id, authid, charsmax(authid));
-
-        new JSON:data = json_init_object();
-
-        if(data == Invalid_JSON)
-        {
-            log_amx("Failed to initialize JSON object");
-            return;
-        }
-
-        json_object_set_number(data, "kills", 0);
-        json_object_set_number(data, "deaths", 0);
-        json_object_set_number(data, "damage", 0);
-
-        new queryData[512];
-        json_serial_to_string(data, queryData, charsmax(queryData));
-        json_free(data);
-
-        SQL_ThreadQuery(g_hTuple, "OnPlayerSessionCreated", fmt("INSERT INTO `players_sessions` \
-            (steamid, joined_time, left_time, data) \
-            VALUES ('%s', %i, %i, '%s');",
-            authid, g_ePlayersSessions[id][JOINED_TIME], 0, queryData, data, sizeof(data))
-        );
-
+        CreateNewPlayerSession(id);
         goto cleanup;
     }
 
@@ -434,19 +434,57 @@ public OnPlayerSessionDataRetrieved(failstate, Handle:query, error[], errnum, da
     SQL_FreeHandle(query);
 }
 
-public OnPlayerSessionCreated(failstate, Handle:query, error[], errnum, data[], size, Float:queuetime)
+CreateNewPlayerSession(const id)
 {
-    if(failstate || errnum)
+    if(!is_user_connected(id) && !is_user_connecting(id))
+        return;
+
+    new authid[MAX_AUTHID_LENGTH];
+    get_user_authid(id, authid, charsmax(authid));
+
+    new JSON:newSessionData = json_init_object();
+
+    if(newSessionData == Invalid_JSON)
     {
-        log_amx("[LINE: %i] An SQL Error has been encoutered. Error code %i^nError: %s", __LINE__, errnum, error);
-        SQL_FreeHandle(query);
+        log_amx("Failed to initialize JSON object");
         return;
     }
 
-    new const id = data[0];
+    json_object_set_number(newSessionData, "kills", 0);
+    json_object_set_number(newSessionData, "deaths", 0);
+    json_object_set_number(newSessionData, "damage", 0);
 
-    if(!is_user_connected(id) && !is_user_connecting(id))
+    new queryData[512];
+    json_serial_to_string(newSessionData, queryData, charsmax(queryData));
+    json_free(newSessionData);
+
+    new errorCode, errorStr[512];
+    new const Handle:conn = SQL_Connect(g_hTuple, errorCode, errorStr, charsmax(errorStr));
+
+    if(conn == Empty_Handle)
+    {
+        if(g_hcTakeDamageHook != INVALID_HOOKCHAIN)
+            DisableHookChain(g_hcTakeDamageHook);
+
+        SQL_FreeHandle(g_hTuple);
+
+        log_amx("Database connection error %i. %s", errorCode, errorStr);
+        set_fail_state("Failed to connect to database.");
+    }
+
+    new Handle:query = SQL_PrepareQuery(conn, "INSERT INTO `players_sessions` \
+        (steamid, joined_time, left_time, data) \
+        VALUES ('%s', %i, %i, ^"%s^");",
+        authid, g_ePlayersSessions[id][JOINED_TIME], 0, queryData
+    );
+
+    if(!SQL_Execute(query))
+    {
+        log_amx("Failed to create new session for %N", id);
+        SQL_FreeHandle(query);
+        SQL_FreeHandle(conn);
         return;
+    }
 
     g_ePlayersSessions[id][ID] = SQL_GetInsertId(query);
 
@@ -467,15 +505,15 @@ SavePlayerSession(const id)
         return;
     }
 
-    json_object_set_number(data, "kills", g_ePlayersSessions[id][KILLS]);
-    json_object_set_number(data, "deaths", g_ePlayersSessions[id][DEATHS]);
+    json_object_set_number(data, "kills", g_ePlayersSessions[id][KILLS] + get_entvar(id, var_frags));
+    json_object_set_number(data, "deaths", g_ePlayersSessions[id][DEATHS] + get_member(id, m_iDeaths));
     json_object_set_number(data, "damage", g_ePlayersSessions[id][DAMAGE]);
 
     new queryData[512];
     json_serial_to_string(data, queryData, charsmax(queryData));
     json_free(data);
 
-    formatex(query, charsmax(query), "UPDATE players_sessions SET left_time = %i, data = '%s' WHERE id = %i AND steamid = '%s'", get_systime(), queryData, g_ePlayersSessions[id][ID], authid);
+    formatex(query, charsmax(query), "UPDATE players_sessions SET left_time = %i, data = ^"%s^" WHERE id = %i AND steamid = '%s'", get_systime(), queryData, g_ePlayersSessions[id][ID], authid);
 
     server_print("info: %s", query);
 

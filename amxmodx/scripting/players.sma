@@ -43,7 +43,7 @@ new HookChain:g_hcPlayerKilledHook;
 
 public plugin_init()
 {
-    register_plugin("[GS] Players", "0.7.6", "lexzor");
+    register_plugin("[GS] Players", "0.7.7", "lexzor");
 
     register_concmd("players_generate_unique_keys", "players_generate_unique_keys_cmd");
     register_clcmd("amx_panel_key", "amx_panel_key_cmd");
@@ -443,7 +443,7 @@ public OnPlayerSessionDataRetrieved(failstate, Handle:query, error[], errnum, da
 
     if(SQL_NumResults(query) == 0)
     {
-        CreateNewPlayerSession(id, true);
+        CreateNewPlayerSession(id);
         goto cleanup;
     }
 
@@ -490,9 +490,9 @@ public OnPlayerSessionDataRetrieved(failstate, Handle:query, error[], errnum, da
     SQL_FreeHandle(query);
 }
 
-CreateNewPlayerSession(const id, const bool:immediate_close = false)
+CreateNewPlayerSession(const id)
 {
-    if(!immediate_close && !is_user_connected(id) && !is_user_connecting(id))
+    if(!is_user_connected(id) && !is_user_connecting(id))
         return;
 
     new authid[MAX_AUTHID_LENGTH];
@@ -551,7 +551,21 @@ CreateNewPlayerSession(const id, const bool:immediate_close = false)
 
 SavePlayerSession(const id)
 {
-    static query[2048];
+    new errorCode, errorStr[512];
+    new const Handle:conn = SQL_Connect(g_hTuple, errorCode, errorStr, charsmax(errorStr));
+
+    if(conn == Empty_Handle)
+    {
+        if(g_hcTakeDamageHook != INVALID_HOOKCHAIN)
+            DisableHookChain(g_hcTakeDamageHook);
+
+        if(g_hcPlayerKilledHook != INVALID_HOOKCHAIN)
+            DisableHookChain(g_hcPlayerKilledHook);
+
+        log_amx("Database connection error %i. %s", errorCode, errorStr);
+        set_fail_state("Failed to connect to database.");
+    }
+
     new authid[MAX_AUTHID_LENGTH];
     get_user_authid(id, authid, charsmax(authid));
 
@@ -572,9 +586,17 @@ SavePlayerSession(const id)
     json_free(data);
 
     new leftTime = g_bPendingDisconnect[id] ? g_iPendingDisconnectTime[id] : get_systime();
-    formatex(query, charsmax(query), "UPDATE players_sessions SET left_time = %i, data = '%s' WHERE id = %i AND steamid = '%s'", leftTime, queryData, g_ePlayersSessions[id][ID], authid);
 
-    SQL_ThreadQuery(g_hTuple, "FreeHandle", query);
+    new Handle:query = SQL_PrepareQuery(conn, fmt("UPDATE players_sessions SET left_time = %i, data = '%s' WHERE id = %i AND steamid = '%s'", leftTime, queryData, g_ePlayersSessions[id][ID], authid));
+
+    if(!SQL_Execute(query))
+    {
+        SQL_QueryError(query, errorStr, charsmax(errorStr));
+        log_amx("Failed to save session for %N. %s", id, errorStr);
+        SQL_FreeHandle(query);
+        SQL_FreeHandle(conn);
+        return;
+    }
 }
 
 public FreeHandle(failstate, Handle:query, error[], errnum, data[], size, Float:queuetime)

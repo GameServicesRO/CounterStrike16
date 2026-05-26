@@ -39,7 +39,7 @@ new HookChain:g_hcTakeDamageHook;
 
 public plugin_init()
 {
-    register_plugin("[GS] Players", "0.7.2", "lexzor");
+    register_plugin("[GS] Players", "0.7.3", "lexzor");
 
     register_concmd("players_generate_unique_keys", "players_generate_unique_keys_cmd");
     register_clcmd("amx_panel_key", "amx_panel_key_cmd");
@@ -259,8 +259,6 @@ public players_generate_unique_keys_cmd()
             continue;
         }
 
-        server_print("Updated %s with %s", currentSteamID, unique_key);
-
         SQL_FreeHandle(updateQuery);
         SQL_NextRow(query);
     }
@@ -478,11 +476,6 @@ CreateNewPlayerSession(const id)
         authid, g_ePlayersSessions[id][JOINED_TIME], 0, queryData
     );
 
-    server_print("%s",fmt("INSERT INTO `players_sessions` \
-        (steamid, joined_time, left_time, data) \
-        VALUES (^"%s^", %i, %i, '%s');",
-        authid, g_ePlayersSessions[id][JOINED_TIME], 0, queryData));
-
     if(!SQL_Execute(query))
     {
         SQL_QueryError(query, errorStr, charsmax(errorStr));
@@ -520,8 +513,6 @@ SavePlayerSession(const id)
     json_free(data);
 
     formatex(query, charsmax(query), "UPDATE players_sessions SET left_time = %i, data = '%s' WHERE id = %i AND steamid = '%s'", get_systime(), queryData, g_ePlayersSessions[id][ID], authid);
-
-    server_print("info: %s", query);
 
     SQL_ThreadQuery(g_hTuple, "FreeHandle", query);
 }

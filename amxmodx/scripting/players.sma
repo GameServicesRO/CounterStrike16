@@ -43,7 +43,7 @@ new HookChain:g_hcPlayerKilledHook;
 
 public plugin_init()
 {
-    register_plugin("[GS] Players", "0.7.5", "lexzor");
+    register_plugin("[GS] Players", "0.7.6", "lexzor");
 
     register_concmd("players_generate_unique_keys", "players_generate_unique_keys_cmd");
     register_clcmd("amx_panel_key", "amx_panel_key_cmd");
@@ -464,15 +464,20 @@ public OnPlayerSessionDataRetrieved(failstate, Handle:query, error[], errnum, da
         goto cleanup;
     }
 
-    json_object_set_string(playerSession, "", sessionData);
+    if(!json_object_set_string(playerSession, "data", sessionData))
+    {
+        json_free(playerSession);
+        log_amx("Failed to create JSON object from database string");
+        goto cleanup;
+    }
 
     g_ePlayersSessions[id][ID] = SQL_ReadResult(query, SQL_FieldNameToNum(query, "id"));
     g_ePlayersSessions[id][JOINED_TIME] = SQL_ReadResult(query, SQL_FieldNameToNum(query, "joined_time"));
     g_ePlayersSessions[id][LEFT_TIME] = SQL_ReadResult(query, SQL_FieldNameToNum(query, "left_time"));
 
-    g_ePlayersSessions[id][KILLS] = json_object_get_number(playerSession, "kills");
-    g_ePlayersSessions[id][DEATHS] = json_object_get_number(playerSession, "deaths");
-    g_ePlayersSessions[id][DAMAGE] = json_object_get_number(playerSession, "damage");
+    g_ePlayersSessions[id][KILLS] = json_object_get_number(playerSession, "data.kills", true);
+    g_ePlayersSessions[id][DEATHS] = json_object_get_number(playerSession, "data.deaths", true);
+    g_ePlayersSessions[id][DAMAGE] = json_object_get_number(playerSession, "data.damage", true);
 
     json_free(playerSession);
 

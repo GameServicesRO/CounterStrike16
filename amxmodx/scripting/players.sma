@@ -35,11 +35,14 @@ new g_ePlayersSessions[MAX_PLAYERS + 1][PlayerSession];
 new DatabaseState:g_ePlayerDatabaseState[MAX_PLAYERS + 1];
 new g_iDebouncePanelKeyDBRequestTime[MAX_PLAYERS + 1];
 
+new bool:g_bPendingDisconnect[MAX_PLAYERS + 1];
+new g_iPendingDisconnectTime[MAX_PLAYERS + 1];
+
 new HookChain:g_hcTakeDamageHook;
 
 public plugin_init()
 {
-    register_plugin("[GS] Players", "0.7.3", "lexzor");
+    register_plugin("[GS] Players", "0.7.4", "lexzor");
 
     register_concmd("players_generate_unique_keys", "players_generate_unique_keys_cmd");
     register_clcmd("amx_panel_key", "amx_panel_key_cmd");
@@ -232,11 +235,11 @@ public players_generate_unique_keys_cmd()
         log_amx("Failed to execute table creation query. %s", errorStr);
     }
 
-
     if(SQL_NumResults(query) == 0)
     {
         log_amx("All players have unique keys");
         SQL_FreeHandle(query);
+        SQL_FreeHandle(conn);
         return;
     }
 
@@ -284,6 +287,9 @@ public client_connect(id)
 
     g_ePlayerDatabaseState[id] = DatabaseState:DATA_NOT_RETRIEVED;
     g_iDebouncePanelKeyDBRequestTime[id] = 0;
+
+    g_bPendingDisconnect[id] = false;
+    g_iPendingDisconnectTime[id] = 0;
 }
 
 public client_putinserver(id)
@@ -357,6 +363,11 @@ public client_disconnected(id)
     {
         SavePlayerSession(id);
     }
+    else if(g_ePlayerDatabaseState[id] == DatabaseState:WAITING_DATA)
+    {
+        g_bPendingDisconnect[id] = true;
+        g_iPendingDisconnectTime[id] = currentTime;
+    }
 
     return PLUGIN_CONTINUE;
 }
@@ -386,7 +397,18 @@ public OnPlayerSessionDataRetrieved(failstate, Handle:query, error[], errnum, da
     g_ePlayerDatabaseState[id] = DatabaseState:DATA_RETRIEVED;
 
     if(!is_user_connected(id))
+    {
+        if(g_bPendingDisconnect[id])
+        {
+            if(SQL_NumResults(query) == 0)
+                CreateNewPlayerSession(id);
+
+            SavePlayerSession(id);
+            g_bPendingDisconnect[id] = false;
+        }
+        SQL_FreeHandle(query);
         return;
+    }
 
     if(SQL_NumResults(query) == 0)
     {
@@ -397,7 +419,7 @@ public OnPlayerSessionDataRetrieved(failstate, Handle:query, error[], errnum, da
     if(SQL_NumResults(query) > 1)
     {
         log_amx("Retrieving player session for %N retrieved more than 1 session", id);
-        return;
+        goto cleanup;
     }
 
     new sessionData[512];
@@ -464,7 +486,7 @@ CreateNewPlayerSession(const id)
         if(g_hcTakeDamageHook != INVALID_HOOKCHAIN)
             DisableHookChain(g_hcTakeDamageHook);
 
-        SQL_FreeHandle(g_hTuple);
+        SQL_FreeHandle(conn);
 
         log_amx("Database connection error %i. %s", errorCode, errorStr);
         set_fail_state("Failed to connect to database.");

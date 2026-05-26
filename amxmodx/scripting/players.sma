@@ -43,7 +43,7 @@ new HookChain:g_hcPlayerKilledHook;
 
 public plugin_init()
 {
-    register_plugin("[GS] Players", "0.7.7", "lexzor");
+    register_plugin("[GS] Players", "0.7.8", "lexzor");
 
     register_concmd("players_generate_unique_keys", "players_generate_unique_keys_cmd");
     register_clcmd("amx_panel_key", "amx_panel_key_cmd");
@@ -67,12 +67,14 @@ public RG_CBasePlayer_TakeDamage_Post(const this, pevInflictor, pevAttacker, Flo
 
 public RG_CSGameRules_PlayerKilled_Post(const victim, const killer, const inflictor)
 {
+
+
     if(is_user_connected(victim) && g_ePlayerDatabaseState[victim] == DatabaseState:DATA_RETRIEVED)
     {
         g_ePlayersSessions[victim][DEATHS]++;
     }
     
-    if(is_user_connected(killer) && g_ePlayerDatabaseState[killer] == DatabaseState:DATA_RETRIEVED)
+    if(is_user_connected(killer) && victim != killer && g_ePlayerDatabaseState[killer] == DatabaseState:DATA_RETRIEVED)
     {
         g_ePlayersSessions[killer][KILLS]++;
     }
@@ -456,18 +458,11 @@ public OnPlayerSessionDataRetrieved(failstate, Handle:query, error[], errnum, da
     new sessionData[512];
     SQL_ReadResult(query, SQL_FieldNameToNum(query, "data"), sessionData, charsmax(sessionData));
 
-    new JSON:playerSession = json_init_object();
+    new JSON:playerSession = json_parse(sessionData, false, false);
 
     if(playerSession == Invalid_JSON)
     {
-        log_amx("Failed to parse player session data json for %N", id);
-        goto cleanup;
-    }
-
-    if(!json_object_set_string(playerSession, "data", sessionData))
-    {
-        json_free(playerSession);
-        log_amx("Failed to create JSON object from database string");
+        log_amx("Failed to parse JSON for session data");
         goto cleanup;
     }
 
@@ -475,9 +470,11 @@ public OnPlayerSessionDataRetrieved(failstate, Handle:query, error[], errnum, da
     g_ePlayersSessions[id][JOINED_TIME] = SQL_ReadResult(query, SQL_FieldNameToNum(query, "joined_time"));
     g_ePlayersSessions[id][LEFT_TIME] = SQL_ReadResult(query, SQL_FieldNameToNum(query, "left_time"));
 
-    g_ePlayersSessions[id][KILLS] = json_object_get_number(playerSession, "data.kills", true);
-    g_ePlayersSessions[id][DEATHS] = json_object_get_number(playerSession, "data.deaths", true);
-    g_ePlayersSessions[id][DAMAGE] = json_object_get_number(playerSession, "data.damage", true);
+    g_ePlayersSessions[id][KILLS] = json_object_get_number(playerSession, "kills");
+    g_ePlayersSessions[id][DEATHS] = json_object_get_number(playerSession, "deaths");
+    g_ePlayersSessions[id][DAMAGE] = json_object_get_number(playerSession, "damage");
+
+    server_print("----- %i %i %i", g_ePlayersSessions[id][KILLS], g_ePlayersSessions[id][DEATHS], g_ePlayersSessions[id][DAMAGE]);
 
     json_free(playerSession);
 

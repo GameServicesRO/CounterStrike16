@@ -472,7 +472,20 @@ public adminSql()
 
 	SQL_QueryAndIgnore(sql, "CREATE TABLE IF NOT EXISTS `%s` (`id` INT(11) NOT NULL AUTO_INCREMENT, `auth` VARCHAR( 64 ) NOT NULL UNIQUE, `steamid` VARCHAR( 64 ) DEFAULT NULL UNIQUE, `display_name` VARCHAR(64) NULL DEFAULT NULL, `password` VARCHAR( 32 ) NULL DEFAULT NULL, `group_id` INT(11) NULL DEFAULT NULL, `vip_group_id` INT(11) NULL DEFAULT NULL, `access` VARCHAR( 32 ) NOT NULL, `flags` VARCHAR( 32 ) NOT NULL, `mentions` VARCHAR(255) DEFAULT NULL, `vip_expire` INT(11) NOT NULL DEFAULT 0, `expire` INT(11) NOT NULL DEFAULT 0, `hide` INT(1) NOT NULL DEFAULT 0, PRIMARY KEY(id)) COMMENT = 'AMX Mod X Admins';", table)
 	SQL_QueryAndIgnore(sql, "CREATE TABLE IF NOT EXISTS `%s_groups` (`id` INT(11) NOT NULL AUTO_INCREMENT, `name` VARCHAR( 64 ) NOT NULL UNIQUE, `is_vip_group` INT(1) NOT NULL DEFAULT 0 , `flags` VARCHAR( 64 ) NOT NULL, `additional_properties` JSON NULL, `hide` INT(1) NOT NULL DEFAULT 0, PRIMARY KEY(id)) COMMENT = 'GameServices Admins Groups';", table)
-	
+	SQL_QueryAndIgnore(sql,
+		"CREATE TABLE IF NOT EXISTS `%s_history` ( \
+			`id` INT(11) NOT NULL AUTO_INCREMENT, \
+			`admin_id` INT NOT NULL, \
+			`action` VARCHAR(64) NOT NULL, \
+			`panel_user_id` INT(11) NOT NULL, \
+			`before` JSON NOT NULL, \
+			`after` JSON NOT NULL, \
+			`created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP, \
+			PRIMARY KEY (`id`) \
+		) COMMENT = 'GameServices Admins Actions History'",
+		table
+	);
+
 	new Handle:query = SQL_PrepareQuery(sql,
 		"SELECT \
 			a.auth AS auth, \

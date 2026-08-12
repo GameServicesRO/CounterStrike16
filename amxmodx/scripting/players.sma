@@ -37,6 +37,7 @@ new g_iDebouncePanelKeyDBRequestTime[MAX_PLAYERS + 1];
 
 new bool:g_bPendingDisconnect[MAX_PLAYERS + 1];
 new g_iPendingDisconnectTime[MAX_PLAYERS + 1];
+new g_iPlayerConnectionTime[MAX_PLAYERS + 1];
 
 new HookChain:g_hcTakeDamageHook;
 new HookChain:g_hcPlayerKilledHook;
@@ -308,6 +309,8 @@ public client_connect(id)
     g_ePlayersSessions[id][DEATHS] = 0;
     g_ePlayersSessions[id][DAMAGE] = 0;
 
+    g_iPlayerConnectionTime[id] = get_systime();
+
     g_ePlayerDatabaseState[id] = DatabaseState:DATA_NOT_RETRIEVED;
     g_iDebouncePanelKeyDBRequestTime[id] = 0;
 
@@ -369,7 +372,7 @@ public client_disconnected(id)
         return PLUGIN_CONTINUE;
 
     new currentTime = get_systime();
-    new playedTime = currentTime - g_ePlayersSessions[id][JOINED_TIME];
+    new playedTime = currentTime - g_iPlayerConnectionTime[id];
     
     new authid[MAX_AUTHID_LENGTH];
     get_user_authid(id, authid, charsmax(authid));

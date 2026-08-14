@@ -1,4 +1,5 @@
 #include <amxmodx>
+#include <fakemeta>
 #include <geoip>
 #include <sqlx>
 #include <json>
@@ -68,8 +69,6 @@ public RG_CBasePlayer_TakeDamage_Post(const this, pevInflictor, pevAttacker, Flo
 
 public RG_CSGameRules_PlayerKilled_Post(const victim, const killer, const inflictor)
 {
-
-
     if(is_user_connected(victim) && g_ePlayerDatabaseState[victim] == DatabaseState:DATA_RETRIEVED)
     {
         g_ePlayersSessions[victim][DEATHS]++;
@@ -235,8 +234,20 @@ public plugin_cfg()
         log_amx("Failed to execute table creation query for table players_sessions. %s", errorStr);
     }
 
+    query = SQL_PrepareQuery(conn,
+        "DELETE FROM players_sessions WHERE left_time = 0"
+    );
+
+    if (!SQL_Execute(query))
+    {
+        SQL_QueryError(query, errorStr, charsmax(errorStr));
+        log_amx("Failed to clean up stale sessions. %s", errorStr);
+    }
+
     SQL_FreeHandle(conn);
-    SQL_FreeHandle(query);
+
+    if(query != Empty_Handle)
+        SQL_FreeHandle(query);
 }
 
 public players_generate_unique_keys_cmd()

@@ -411,57 +411,20 @@ public PrepareTable()
 	get_cvar_string("amx_sql_pass", szData[2], charsmax(szData[]));
 	get_cvar_string("amx_sql_db", szData[3], charsmax(szData[]));
 	g_sql_tuple = SQL_MakeDbTuple(szData[0], szData[1], szData[2], szData[3], 20);
-	
+
+	// Tables created before this column was introduced won't have it; this adds it
+	// on servers with an existing advanced_bans table. Failing here is the expected,
+	// common case (once the column already exists from a previous run) and must not
+	// be treated as fatal - unlike every other query in this file.
+
+	new errcode, error[128];
+
 	new query[1024];
 	formatex(query, sizeof(query) - 1,\
 		"CREATE TABLE IF NOT EXISTS %s (id int(11) auto_increment, %s varchar(32), %s varchar(64), %s int(10), %s varchar(32), %s varchar(128), %s varchar(64), %s varchar(64), %s varchar(64), %s int(11), %s int(1) not null default 0, %s int(1) not null default 0, primary key (id))",\
 		TABLE_NAME, KEY_NAME, KEY_STEAMID, KEY_BANLENGTH, KEY_UNBANTIME, KEY_REASON, KEY_ADMIN_NAME, KEY_ADMIN_STEAMID, KEY_SERVER_NAME, KEY_BAN_TIME, KEY_HIDE, KEY_UNBANNED
 		);
 
-	// Tables created before this column was introduced won't have it; this adds it
-	// on servers with an existing advanced_bans table. Fails harmlessly (logged only)
-	// once the column already exists.
-	new alterQuery[256];
-	formatex(alterQuery, sizeof(alterQuery) - 1,\
-		"ALTER TABLE %s ADD COLUMN %s int(1) not null default 0",\
-		TABLE_NAME, KEY_UNBANNED
-		);
-
-	new historyQuery[1024];
-	formatex(historyQuery, sizeof(historyQuery) - 1,\
-		"CREATE TABLE IF NOT EXISTS %s (id int(11) auto_increment, %s int(11) not null, %s varchar(64) not null, %s int(11) not null, %s longtext not null, %s longtext not null, %s timestamp null default current_timestamp(), primary key (id))",\
-		HISTORY_TABLE_NAME, HISTORY_KEY_BAN_ID, HISTORY_KEY_ACTION, HISTORY_KEY_PANEL_USER_ID, HISTORY_KEY_BEFORE, HISTORY_KEY_AFTER, HISTORY_KEY_CREATED_AT
-		);
-
-	// Run the (possibly failing) ALTER synchronously and first, so that on servers
-	// upgrading from an older schema the unbanned column is guaranteed to exist
-	// before LoadBans() ever SELECTs it below - threaded queries queued after this
-	// one aren't guaranteed to run in submission order.
-	new errcode, error[128];
-	new Handle:alterConnection = SQL_Connect(g_sql_tuple, errcode, error, sizeof(error) - 1);
-
-	if( alterConnection == Empty_Handle )
-	{
-		set_fail_state("Unable to connect to database.");
-	}
-
-	new Handle:alterResult = SQL_PrepareQuery(alterConnection, "%s", alterQuery);
-
-	if( !SQL_Execute(alterResult) )
-	{
-		// Expected to fail (and gets logged, not treated as fatal) once the
-		// column already exists from a previous run.
-		SQL_QueryError(alterResult, error, sizeof(error) - 1);
-		log_amx("Column %s on %s already exists or could not be added: %s", KEY_UNBANNED, TABLE_NAME, error);
-	}
-
-	SQL_FreeHandle(alterResult);
-	SQL_FreeHandle(alterConnection);
-
-	#if defined THREAD_QUERIES
-	SQL_ThreadQuery(g_sql_tuple, "QueryCreateTable", query);
-	SQL_ThreadQuery(g_sql_tuple, "QueryCreateHistoryTable", historyQuery);
-	#else
 	new Handle:connection = SQL_Connect(g_sql_tuple, errcode, error, sizeof(error) - 1);
 
 	if( connection == Empty_Handle )
@@ -478,6 +441,12 @@ public PrepareTable()
 	}
 
 	SQL_FreeHandle(result);
+
+	new historyQuery[1024];
+	formatex(historyQuery, sizeof(historyQuery) - 1,\
+		"CREATE TABLE IF NOT EXISTS %s (id int(11) auto_increment, %s int(11) not null, %s varchar(64) not null, %s int(11) not null, %s longtext not null, %s longtext not null, %s timestamp null default current_timestamp(), primary key (id))",\
+		HISTORY_TABLE_NAME, HISTORY_KEY_BAN_ID, HISTORY_KEY_ACTION, HISTORY_KEY_PANEL_USER_ID, HISTORY_KEY_BEFORE, HISTORY_KEY_AFTER, HISTORY_KEY_CREATED_AT
+		);
 
 	new Handle:historyResult = SQL_PrepareQuery(connection, "%s", historyQuery);
 
@@ -511,7 +480,13 @@ public QueryCreateTable(failstate, Handle:query, error[], errcode, data[], datas
 	}
 	else
 	{
-		LoadBans();
+		new historyQuery[1024];
+		formatex(historyQuery, sizeof(historyQuery) - 1,\
+			"CREATE TABLE IF NOT EXISTS %s (id int(11) auto_increment, %s int(11) not null, %s varchar(64) not null, %s int(11) not null, %s longtext not null, %s longtext not null, %s timestamp null default current_timestamp(), primary key (id))",\
+			HISTORY_TABLE_NAME, HISTORY_KEY_BAN_ID, HISTORY_KEY_ACTION, HISTORY_KEY_PANEL_USER_ID, HISTORY_KEY_BEFORE, HISTORY_KEY_AFTER, HISTORY_KEY_CREATED_AT
+			);
+
+		SQL_ThreadQuery(g_sql_tuple, "QueryCreateHistoryTable", historyQuery);
 	}
 }
 
@@ -529,6 +504,10 @@ public QueryCreateHistoryTable(failstate, Handle:query, error[], errcode, data[]
 	{
 		log_amx("Error on query: %s", error);
 	}
+	else
+	{
+		LoadBans();
+	}
 }
 
 new bool:g_bChangemap;
@@ -540,7 +519,6 @@ public plugin_end()
 }
 
 
-#endif
 #endif
 
 public plugin_cfg()

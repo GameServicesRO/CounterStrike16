@@ -232,6 +232,15 @@
 #define KEY_SERVER_NAME "server_name"
 #define KEY_BAN_TIME "bantime"
 #define KEY_HIDE	"hide"
+#define KEY_UNBANNED	"unbanned"
+
+#define HISTORY_TABLE_NAME		"advanced_bans_history"
+#define HISTORY_KEY_BAN_ID		"ban_id"
+#define HISTORY_KEY_ACTION		"action"
+#define HISTORY_KEY_PANEL_USER_ID	"panel_user_id"
+#define HISTORY_KEY_BEFORE		"before"
+#define HISTORY_KEY_AFTER		"after"
+#define HISTORY_KEY_CREATED_AT		"created_at"
 
 #define RELOAD_BANS_INTERVAL	60.0
 #endif
@@ -405,31 +414,82 @@ public PrepareTable()
 	
 	new query[1024];
 	formatex(query, sizeof(query) - 1,\
-		"CREATE TABLE IF NOT EXISTS %s (id int(11) auto_increment, %s varchar(32), %s varchar(64), %s int(10), %s varchar(32), %s varchar(128), %s varchar(64), %s varchar(64), %s varchar(64), %s int(11), %s int(1) not null default 0, primary key (id))",\
-		TABLE_NAME, KEY_NAME, KEY_STEAMID, KEY_BANLENGTH, KEY_UNBANTIME, KEY_REASON, KEY_ADMIN_NAME, KEY_ADMIN_STEAMID, KEY_SERVER_NAME, KEY_BAN_TIME, KEY_HIDE
+		"CREATE TABLE IF NOT EXISTS %s (id int(11) auto_increment, %s varchar(32), %s varchar(64), %s int(10), %s varchar(32), %s varchar(128), %s varchar(64), %s varchar(64), %s varchar(64), %s int(11), %s int(1) not null default 0, %s int(1) not null default 0, primary key (id))",\
+		TABLE_NAME, KEY_NAME, KEY_STEAMID, KEY_BANLENGTH, KEY_UNBANTIME, KEY_REASON, KEY_ADMIN_NAME, KEY_ADMIN_STEAMID, KEY_SERVER_NAME, KEY_BAN_TIME, KEY_HIDE, KEY_UNBANNED
 		);
-	
+
+	// Tables created before this column was introduced won't have it; this adds it
+	// on servers with an existing advanced_bans table. Fails harmlessly (logged only)
+	// once the column already exists.
+	new alterQuery[256];
+	formatex(alterQuery, sizeof(alterQuery) - 1,\
+		"ALTER TABLE %s ADD COLUMN %s int(1) not null default 0",\
+		TABLE_NAME, KEY_UNBANNED
+		);
+
+	new historyQuery[1024];
+	formatex(historyQuery, sizeof(historyQuery) - 1,\
+		"CREATE TABLE IF NOT EXISTS %s (id int(11) auto_increment, %s int(11) not null, %s varchar(64) not null, %s int(11) not null, %s longtext not null, %s longtext not null, %s timestamp null default current_timestamp(), primary key (id))",\
+		HISTORY_TABLE_NAME, HISTORY_KEY_BAN_ID, HISTORY_KEY_ACTION, HISTORY_KEY_PANEL_USER_ID, HISTORY_KEY_BEFORE, HISTORY_KEY_AFTER, HISTORY_KEY_CREATED_AT
+		);
+
+	// Run the (possibly failing) ALTER synchronously and first, so that on servers
+	// upgrading from an older schema the unbanned column is guaranteed to exist
+	// before LoadBans() ever SELECTs it below - threaded queries queued after this
+	// one aren't guaranteed to run in submission order.
+	new errcode, error[128];
+	new Handle:alterConnection = SQL_Connect(g_sql_tuple, errcode, error, sizeof(error) - 1);
+
+	if( alterConnection == Empty_Handle )
+	{
+		set_fail_state("Unable to connect to database.");
+	}
+
+	new Handle:alterResult = SQL_PrepareQuery(alterConnection, "%s", alterQuery);
+
+	if( !SQL_Execute(alterResult) )
+	{
+		// Expected to fail (and gets logged, not treated as fatal) once the
+		// column already exists from a previous run.
+		SQL_QueryError(alterResult, error, sizeof(error) - 1);
+		log_amx("Column %s on %s already exists or could not be added: %s", KEY_UNBANNED, TABLE_NAME, error);
+	}
+
+	SQL_FreeHandle(alterResult);
+	SQL_FreeHandle(alterConnection);
+
 	#if defined THREAD_QUERIES
 	SQL_ThreadQuery(g_sql_tuple, "QueryCreateTable", query);
+	SQL_ThreadQuery(g_sql_tuple, "QueryCreateHistoryTable", historyQuery);
 	#else
-	new errcode, error[128];
 	new Handle:connection = SQL_Connect(g_sql_tuple, errcode, error, sizeof(error) - 1);
-	
+
 	if( connection == Empty_Handle )
 	{
 		set_fail_state("Unable to connect to database.");
 	}
-	
+
 	new Handle:result = SQL_PrepareQuery(connection, "%s", query);
-	
+
 	if( !SQL_Execute(result) )
 	{
 		SQL_QueryError(result, error, sizeof(error) - 1);
 		log_amx("Failed to create table for bans: %s", error);
 	}
-	
+
+	SQL_FreeHandle(result);
+
+	new Handle:historyResult = SQL_PrepareQuery(connection, "%s", historyQuery);
+
+	if( !SQL_Execute(historyResult) )
+	{
+		SQL_QueryError(historyResult, error, sizeof(error) - 1);
+		log_amx("Failed to create history table for bans: %s", error);
+	}
+
+	SQL_FreeHandle(historyResult);
 	SQL_FreeHandle(connection);
-	
+
 	LoadBans();
 	#endif
 }
@@ -452,6 +512,22 @@ public QueryCreateTable(failstate, Handle:query, error[], errcode, data[], datas
 	else
 	{
 		LoadBans();
+	}
+}
+
+public QueryCreateHistoryTable(failstate, Handle:query, error[], errcode, data[], datasize, Float:queuetime)
+{
+	if( failstate == TQUERY_CONNECT_FAILED )
+	{
+		set_fail_state("Could not connect to database.");
+	}
+	else if( failstate == TQUERY_QUERY_FAILED )
+	{
+		set_fail_state("Query failed.");
+	}
+	else if( errcode )
+	{
+		log_amx("Error on query: %s", error);
 	}
 }
 
@@ -1193,7 +1269,7 @@ public QueryAddBan(failstate, Handle:query, error[], errcode, data[], datasize, 
 	}
 }
 
-public QueryDeleteBan(failstate, Handle:query, error[], errcode, data[], datasize, Float:queuetime)
+public QueryUnbanBan(failstate, Handle:query, error[], errcode, data[], datasize, Float:queuetime)
 {
 	if( failstate == TQUERY_CONNECT_FAILED )
 	{
@@ -1209,7 +1285,7 @@ public QueryDeleteBan(failstate, Handle:query, error[], errcode, data[], datasiz
 	}
 	else
 	{
-		// Yay, ban was deleted! We can all rejoice!
+		// Yay, ban was marked as unbanned! We can all rejoice!
 	}
 }
 
@@ -1289,31 +1365,33 @@ SQL_GetResults(Handle:query)
 RemoveBan(remove)
 {
 	#if defined USING_SQL
-	static query[128];
+	// Marked as unbanned instead of deleted, so the row stays around for a
+	// player's ban history instead of disappearing once the ban ends.
+	static query[160];
 	formatex(query, sizeof(query) - 1,\
-		"DELETE FROM %s WHERE %s = '%s';",\
-		TABLE_NAME, KEY_STEAMID, g_steamids[remove]
+		"UPDATE %s SET %s = 1 WHERE %s = '%s' AND %s = 0;",\
+		TABLE_NAME, KEY_UNBANNED, KEY_STEAMID, g_steamids[remove], KEY_UNBANNED
 		);
-	
+
 	#if defined THREAD_QUERIES
-	SQL_ThreadQuery(g_sql_tuple, "QueryDeleteBan", query);
+	SQL_ThreadQuery(g_sql_tuple, "QueryUnbanBan", query);
 	#else
 	static errcode, error[128];
 	new Handle:connection = SQL_Connect(g_sql_tuple, errcode, error, sizeof(error) - 1);
-	
+
 	if( connection == Empty_Handle )
 	{
 		set_fail_state("Unable to connect to database.");
 	}
-	
+
 	new Handle:result = SQL_PrepareQuery(connection, "%s", query);
-	
+
 	if( !SQL_Execute(result) )
 	{
 		SQL_QueryError(result, error, sizeof(error) - 1);
-		log_amx("Failed to remove ban: %s", error);
+		log_amx("Failed to mark ban as unbanned: %s", error);
 	}
-	
+
 	SQL_FreeHandle(connection);
 	#endif
 	#endif
@@ -1381,34 +1459,36 @@ RemoveBan(pos, const authid[])
 	g_total_bans--;
 	
 	#if defined USING_SQL
-	static query[128];
+	// Marked as unbanned instead of deleted, so the row stays around for a
+	// player's ban history instead of disappearing once the ban ends.
+	static query[160];
 	formatex(query, sizeof(query) - 1,\
-		"DELETE FROM %s WHERE %s = '%s';",\
-		TABLE_NAME, KEY_STEAMID, authid
+		"UPDATE %s SET %s = 1 WHERE %s = '%s' AND %s = 0;",\
+		TABLE_NAME, KEY_UNBANNED, KEY_STEAMID, authid, KEY_UNBANNED
 		);
-	
+
 	#if defined THREAD_QUERIES
-	SQL_ThreadQuery(g_sql_tuple, "QueryDeleteBan", query);
+	SQL_ThreadQuery(g_sql_tuple, "QueryUnbanBan", query);
 	#else
 	static errcode, error[128];
 	new Handle:connection = SQL_Connect(g_sql_tuple, errcode, error, sizeof(error) - 1);
-	
+
 	if( connection == Empty_Handle )
 	{
 		set_fail_state("Unable to connect to database.");
 	}
-	
+
 	new Handle:result = SQL_PrepareQuery(connection, "%s", query);
-	
+
 	if( !SQL_Execute(result) )
 	{
 		SQL_QueryError(result, error, sizeof(error) - 1);
-		log_amx("Failed to remove ban: %s", error);
+		log_amx("Failed to mark ban as unbanned: %s", error);
 	}
-	
+
 	SQL_FreeHandle(connection);
 	#endif
-	
+
 	new data[BannedData];
 	for( new i = 0; i < g_total_bans; i++ )
 	{
@@ -1502,10 +1582,10 @@ public LoadBans()
 	#if defined USING_SQL
 	static query[128];
 	formatex(query, sizeof(query) - 1,\
-		"SELECT * FROM %s;",\
-		TABLE_NAME
+		"SELECT * FROM %s WHERE %s = 0;",\
+		TABLE_NAME, KEY_UNBANNED
 		);
-	
+
 	#if defined THREAD_QUERIES
 	SQL_ThreadQuery(g_sql_tuple, "QueryLoadBans", query);
 	

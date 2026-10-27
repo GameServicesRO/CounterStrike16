@@ -157,7 +157,6 @@
 	  - Added SQL support.
 	
 	
-	
 	Notes:
 	
 	- If you plan to use this plugin, go to the plugin's thread.
@@ -177,8 +176,8 @@
 #include <regex>
 
 #define PLUGIN_NAME	"Advanced Bans"
-#define PLUGIN_VERSION	"0.9"
-#define PLUGIN_AUTHOR	"Exolent"
+#define PLUGIN_VERSION	"0.10"
+#define PLUGIN_AUTHOR	"Exolent + lexzor"
 
 #pragma semicolon 1
 
@@ -443,11 +442,19 @@ public PrepareTable()
 	SQL_FreeHandle(result);
 
 	new historyQuery[1024];
-	formatex(historyQuery, sizeof(historyQuery) - 1,\
-		"CREATE TABLE IF NOT EXISTS %s (id int(11) auto_increment, %s int(11) not null, %s varchar(64) not null, %s int(11) not null, %s longtext not null, %s longtext not null, %s timestamp null default current_timestamp(), primary key (id))",\
-		HISTORY_TABLE_NAME, HISTORY_KEY_BAN_ID, HISTORY_KEY_ACTION, HISTORY_KEY_PANEL_USER_ID, HISTORY_KEY_BEFORE, HISTORY_KEY_AFTER, HISTORY_KEY_CREATED_AT
-		);
-
+	formatex(historyQuery, charsmax(historyQuery),
+		"CREATE TABLE IF NOT EXISTS `%s` (\
+		`id` INT NOT NULL AUTO_INCREMENT,\
+		`ban_id` INT NOT NULL,\
+		`action` VARCHAR(64) NOT NULL,\
+		`panel_user_id` INT NOT NULL,\
+		`before` LONGTEXT NOT NULL,\
+		`after` LONGTEXT NOT NULL,\
+		`created_at` TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,\
+		PRIMARY KEY (`id`)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
+		HISTORY_TABLE_NAME
+	);
+	
 	new Handle:historyResult = SQL_PrepareQuery(connection, "%s", historyQuery);
 
 	if( !SQL_Execute(historyResult) )
@@ -481,9 +488,17 @@ public QueryCreateTable(failstate, Handle:query, error[], errcode, data[], datas
 	else
 	{
 		new historyQuery[1024];
-		formatex(historyQuery, sizeof(historyQuery) - 1,\
-			"CREATE TABLE IF NOT EXISTS %s (id int(11) auto_increment, %s int(11) not null, %s varchar(64) not null, %s int(11) not null, %s longtext not null, %s longtext not null, %s timestamp null default current_timestamp(), primary key (id))",\
-			HISTORY_TABLE_NAME, HISTORY_KEY_BAN_ID, HISTORY_KEY_ACTION, HISTORY_KEY_PANEL_USER_ID, HISTORY_KEY_BEFORE, HISTORY_KEY_AFTER, HISTORY_KEY_CREATED_AT
+		formatex(historyQuery, charsmax(historyQuery),
+			"CREATE TABLE IF NOT EXISTS `%s` (\
+			`id` INT NOT NULL AUTO_INCREMENT,\
+			`ban_id` INT NOT NULL,\
+			`action` VARCHAR(64) NOT NULL,\
+			`panel_user_id` INT NOT NULL,\
+			`before` LONGTEXT NOT NULL,\
+			`after` LONGTEXT NOT NULL,\
+			`created_at` TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,\
+			PRIMARY KEY (`id`)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
+			HISTORY_TABLE_NAME
 			);
 
 		SQL_ThreadQuery(g_sql_tuple, "QueryCreateHistoryTable", historyQuery);

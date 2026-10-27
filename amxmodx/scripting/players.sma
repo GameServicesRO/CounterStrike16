@@ -45,7 +45,7 @@ new HookChain:g_hcPlayerKilledHook;
 
 public plugin_init()
 {
-    register_plugin("[GS] Players", "0.7.9", "lexzor");
+    register_plugin("[GS] Players", "0.8", "lexzor");
 
     register_concmd("players_generate_unique_keys", "players_generate_unique_keys_cmd");
     register_clcmd("amx_panel_key", "amx_panel_key_cmd");
@@ -331,7 +331,7 @@ public client_connect(id)
 
 public client_putinserver(id)
 {
-    if(is_user_bot(id))
+    if(is_user_bot(id) || is_user_hltv(id))
         return PLUGIN_CONTINUE;
 
     new name[MAX_NAME_LENGTH], steamid[MAX_AUTHID_LENGTH], ip[MAX_IP_LENGTH], unique_key[33];

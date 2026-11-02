@@ -4,36 +4,12 @@
 #include <sqlx>
 #include <json>
 #include <reapi>
+#include <gs_players_const>
 
 #define QUERY_SIZE 1024
 #define DEBOUNCE_PANEL_KEY_DB_REQUEST_TIME 2
 
 #pragma semicolon 1
-
-const NO_SESSION_ID = 0;
-
-enum _:PlayerData
-{
-    TIME_PLAYED
-}
-
-enum _:PlayerSession
-{
-    ID,
-    JOINED_TIME,
-    LEFT_TIME,
-    KILLS,
-    DEATHS,
-    DAMAGE
-}
-
-enum DatabaseState
-{
-    DATA_NOT_RETRIEVED,
-    WAITING_DATA,
-    DATA_RETRIEVED,
-    FAILED_TO_RETRIEVE_DATA
-}
 
 new Handle:g_hTuple;
 
@@ -651,6 +627,12 @@ public plugin_natives()
 public native_gs_get_player_online_time(plugin_id, param_count)
 {
     new const id  = get_param(1);
+
+    if(g_ePlayerDatabaseState[id] != DATA_RETRIEVED)
+    {
+        log_amx("Database data still not retrieved for player index %i", id);
+        return -1;
+    }
 
     return g_ePlayerData[id][TIME_PLAYED];
 }
